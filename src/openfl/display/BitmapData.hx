@@ -117,8 +117,7 @@ import openfl.display._internal.stats.DrawCallContext;
 @:access(openfl.geom.Point)
 @:access(openfl.geom.Rectangle)
 #if !openfl_debug
-@:fileXml('tags="haxe,release"')
-@:noDebug
+@:fileXml('tags="haxe,release"') @:noDebug
 #end
 @:autoBuild(openfl.utils._internal.AssetsMacro.embedBitmap())
 class BitmapData implements IBitmapDrawable
@@ -506,14 +505,7 @@ class BitmapData implements IBitmapDrawable
 		}
 
 		var bitmapData = null;
-		var foundDifference,
-			pixel:ARGB,
-			otherPixel:ARGB,
-			comparePixel:ARGB,
-			r,
-			g,
-			b,
-			a;
+		var foundDifference, pixel:ARGB, otherPixel:ARGB, comparePixel:ARGB, r, g, b, a;
 
 		for (y in 0...height)
 		{
@@ -784,6 +776,17 @@ class BitmapData implements IBitmapDrawable
 	**/
 	@:beta public function disposeImage():Void
 	{
+		#if lime
+		if (__isValid
+			&& __texture != null
+			&& Lib.current != null
+			&& Lib.current.stage != null
+			&& Lib.current.stage.context3D != null)
+		{
+			image = null;
+			__surface = null;
+		}
+		#end
 		readable = false;
 	}
 
@@ -2170,7 +2173,7 @@ class BitmapData implements IBitmapDrawable
 		@param	context	A Context3D instance
 		@returns	A Texture or RectangleTexture instance
 	**/
-	@:dox(hide) public function getTexture(context:Context3D):TextureBase
+	@:dox(hide) public function getTexture(context:Context3D, ?inPlacePreMultiply:Bool = false):TextureBase
 	{
 		if (!__isValid) return null;
 
@@ -2214,11 +2217,21 @@ class BitmapData implements IBitmapDrawable
 			#else
 			if (#if openfl_power_of_two !textureImage.powerOfTwo || #end (!textureImage.premultiplied && textureImage.transparent))
 			{
-				textureImage = textureImage.clone();
-				textureImage.premultiplied = true;
-				#if openfl_power_of_two
-				textureImage.powerOfTwo = true;
-				#end
+				// SeiunEngine P4：inPlacePreMultiply=true 时不再整幅 clone（省一份 w*h*4 峰值缓冲），
+				// 就地预乘。调用方必须承诺随后释放CPU副本或不再读取像素，否则读到预乘数据。
+				// 默认 false 保持上游行为（clone后预乘，原数据不动），像素级零差异。
+				if (inPlacePreMultiply == true)
+				{
+					textureImage.premultiplied = true;
+				}
+				else
+				{
+					textureImage = textureImage.clone();
+					textureImage.premultiplied = true;
+					#if openfl_power_of_two
+					textureImage.powerOfTwo = true;
+					#end
+				}
 			}
 			#end
 
@@ -3376,8 +3389,7 @@ class BitmapData implements IBitmapDrawable
 	**/
 	public static function disposeBatch(bitmaps:Array<BitmapData>):Int
 	{
-		if (bitmaps == null || bitmaps.length == 0)
-			return 0;
+		if (bitmaps == null || bitmaps.length == 0) return 0;
 
 		var disposed:Int = 0;
 		for (bmp in bitmaps)
