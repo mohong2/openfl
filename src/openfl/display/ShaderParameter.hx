@@ -3,6 +3,9 @@ package openfl.display;
 #if !flash
 import openfl.utils._internal.Float32Array;
 import openfl.display3D.Context3D;
+#if (lime && !openfl_disable_uniform_upload_cache)
+import openfl.display._internal.ShaderParameterUploadCache;
+#end
 
 /**
 	TODO: Document GLSL Shaders
@@ -163,9 +166,28 @@ import openfl.display3D.Context3D;
 	@:noCompletion private var __uniformMatrix:Float32Array;
 	@:noCompletion private var __useArray:Bool;
 
+	// Uniform upload dirty-check: GL uniform state persists on the program, so identical
+	// re-uploads can be skipped. Shared programs write the same location from multiple
+	// instances, therefore only the last writer may skip. NaN always forces re-upload.
+	// Override lookup caches the last hit slot and falls back to a full scan on miss.
+	@:noCompletion private var __overrideSlotCache:Int = -1;
+
+	#if (lime && !openfl_disable_uniform_upload_cache)
+	/** Sequence number of the last successful upload from this instance. */
+	@:noCompletion private var __uploadedSequence:Int = 0;
+	/** Snapshot of the last non-zero upload vector. */
+	@SuppressWarnings("checkstyle:Dynamic") @:noCompletion private var __uploadedValues:Array<T> = null;
+	/** True when the last upload was the zero/missing-value branch. */
+	@:noCompletion private var __uploadedZeroState:Bool = false;
+	#end
+
 	public function new()
 	{
 		index = 0;
+
+		#if (lime && sys && !openfl_disable_uniform_upload_cache)
+		ShaderParameterUploadCache.checkEnv();
+		#end
 	}
 
 	@:noCompletion private function __disableGL(context:Context3D):Void
@@ -198,6 +220,18 @@ import openfl.display3D.Context3D;
 
 		if (__isUniform)
 		{
+			#if (!openfl_disable_uniform_upload_cache)
+			// Skip when still the last writer for this location and the value is unchanged.
+			if (ShaderParameterUploadCache.enabled
+				&& __uploadedSequence > 0
+				&& ShaderParameterUploadCache.locationWriteExists(index)
+				&& ShaderParameterUploadCache.locationWriteGet(index) == __uploadedSequence
+				&& __isSameUniformValue(value))
+			{
+				return;
+			}
+			#end
+
 			if (value != null && value.length >= __length)
 			{
 				switch (type)
@@ -313,6 +347,14 @@ import openfl.display3D.Context3D;
 					default:
 				}
 			}
+
+			#if (!openfl_disable_uniform_upload_cache)
+			// Record the actual upload (including the zero branch) for later skip checks.
+			ShaderParameterUploadCache.uploadSequence++;
+			__uploadedSequence = ShaderParameterUploadCache.uploadSequence;
+			ShaderParameterUploadCache.locationWriteSet(index, __uploadedSequence);
+			__saveUniformValue(value);
+			#end
 		}
 		else
 		{
@@ -585,6 +627,51 @@ import openfl.display3D.Context3D;
 		}
 		#end
 	}
+
+	// Uniform upload cache helpers.
+	#if (lime && !openfl_disable_uniform_upload_cache)
+	/** Compares the pending value with the last uploaded state. */
+	@SuppressWarnings("checkstyle:Dynamic") @:noCompletion private function __isSameUniformValue(value:Array<T>):Bool
+	{
+		if (value != null && value.length >= __length)
+		{
+			if (__uploadedZeroState || __uploadedValues == null) return false;
+
+			for (i in 0...__length)
+			{
+				if (__uploadedValues[i] != value[i]) return false;
+			}
+
+			return true;
+		}
+
+		// The zero branch only matches a previous zero branch.
+		return __uploadedZeroState;
+	}
+
+	/** Records the last non-zero snapshot or the zero branch marker. */
+	@SuppressWarnings("checkstyle:Dynamic") @:noCompletion private function __saveUniformValue(value:Array<T>):Void
+	{
+		if (value != null && value.length >= __length)
+		{
+			if (__uploadedValues == null || __uploadedValues.length < __length)
+			{
+				__uploadedValues = new Array<T>();
+			}
+
+			for (i in 0...__length)
+			{
+				__uploadedValues[i] = value[i];
+			}
+
+			__uploadedZeroState = false;
+		}
+		else
+		{
+			__uploadedZeroState = true;
+		}
+	}
+	#end
 
 	// Get & Set Methods
 	@:noCompletion private function set_name(value:String):String

@@ -315,9 +315,32 @@ class Shader
 	// }
 	// return shader;
 	// }
+	#if android
+	/** Strip uniform initializers: GLES rejects them but desktop GL allows them. */
+	static private function __sanitizeGLSL(source:String):String
+	{
+		var uniformInitializer = ~/(uniform\s+[A-Za-z_][A-Za-z0-9_]*\s+[A-Za-z_][A-Za-z0-9_]*(\s*\[[^\]]*\])?)\s*=\s*[^;]*;/;
+		var result = new StringBuf();
+		var pos = 0;
+		while (uniformInitializer.matchSub(source, pos))
+		{
+			var matched = uniformInitializer.matchedPos();
+			result.add(source.substr(pos, matched.pos - pos));
+			result.add(uniformInitializer.matched(1) + ";");
+			pos = matched.pos + matched.len;
+		}
+		result.add(source.substr(pos));
+		return result.toString();
+	}
+	#end
+
 	@:noCompletion private function __createGLShader(source:String, type:Int):GLShader
 	{
 		var gl = __context.gl;
+
+		#if android
+		source = __sanitizeGLSL(source);
+		#end
 
 		var shader = gl.createShader(type);
 		gl.shaderSource(shader, source);
@@ -833,14 +856,29 @@ class Shader
 			{
 				boolRef = shaderBuffer.paramRefs_Bool[boolIndex];
 
-				for (j in 0...shaderBuffer.overrideBoolCount)
+				// Cached override slot: O(1) when layout is stable, full scan on miss.
+				var boolOverrideCount = shaderBuffer.overrideBoolCount;
+				var boolHint = boolRef.__overrideSlotCache;
+
+				if (boolHint >= 0 && boolHint < boolOverrideCount && shaderBuffer.overrideBoolNames[boolHint] == boolRef.name)
 				{
-					if (boolRef.name == shaderBuffer.overrideBoolNames[j])
+					overrideBoolValue = shaderBuffer.overrideBoolValues[boolHint];
+					hasOverride = true;
+				}
+				else
+				{
+					for (j in 0...boolOverrideCount)
 					{
-						overrideBoolValue = shaderBuffer.overrideBoolValues[j];
-						hasOverride = true;
-						break;
+						if (boolRef.name == shaderBuffer.overrideBoolNames[j])
+						{
+							overrideBoolValue = shaderBuffer.overrideBoolValues[j];
+							hasOverride = true;
+							boolHint = j;
+							break;
+						}
 					}
+
+					boolRef.__overrideSlotCache = hasOverride ? boolHint : -1;
 				}
 
 				if (hasOverride)
@@ -858,14 +896,29 @@ class Shader
 			{
 				floatRef = shaderBuffer.paramRefs_Float[floatIndex];
 
-				for (j in 0...shaderBuffer.overrideFloatCount)
+				// Same cached slot logic for float overrides.
+				var floatOverrideCount = shaderBuffer.overrideFloatCount;
+				var floatHint = floatRef.__overrideSlotCache;
+
+				if (floatHint >= 0 && floatHint < floatOverrideCount && shaderBuffer.overrideFloatNames[floatHint] == floatRef.name)
 				{
-					if (floatRef.name == shaderBuffer.overrideFloatNames[j])
+					overrideFloatValue = shaderBuffer.overrideFloatValues[floatHint];
+					hasOverride = true;
+				}
+				else
+				{
+					for (j in 0...floatOverrideCount)
 					{
-						overrideFloatValue = shaderBuffer.overrideFloatValues[j];
-						hasOverride = true;
-						break;
+						if (floatRef.name == shaderBuffer.overrideFloatNames[j])
+						{
+							overrideFloatValue = shaderBuffer.overrideFloatValues[j];
+							hasOverride = true;
+							floatHint = j;
+							break;
+						}
 					}
+
+					floatRef.__overrideSlotCache = hasOverride ? floatHint : -1;
 				}
 
 				if (hasOverride)
@@ -883,14 +936,29 @@ class Shader
 			{
 				intRef = shaderBuffer.paramRefs_Int[intIndex];
 
-				for (j in 0...shaderBuffer.overrideIntCount)
+				// Same cached slot logic for int overrides.
+				var intOverrideCount = shaderBuffer.overrideIntCount;
+				var intHint = intRef.__overrideSlotCache;
+
+				if (intHint >= 0 && intHint < intOverrideCount && shaderBuffer.overrideIntNames[intHint] == intRef.name)
 				{
-					if (intRef.name == shaderBuffer.overrideIntNames[j])
+					overrideIntValue = cast shaderBuffer.overrideIntValues[intHint];
+					hasOverride = true;
+				}
+				else
+				{
+					for (j in 0...intOverrideCount)
 					{
-						overrideIntValue = cast shaderBuffer.overrideIntValues[j];
-						hasOverride = true;
-						break;
+						if (intRef.name == shaderBuffer.overrideIntNames[j])
+						{
+							overrideIntValue = cast shaderBuffer.overrideIntValues[j];
+							hasOverride = true;
+							intHint = j;
+							break;
+						}
 					}
+
+					intRef.__overrideSlotCache = hasOverride ? intHint : -1;
 				}
 
 				if (hasOverride)

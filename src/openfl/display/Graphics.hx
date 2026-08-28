@@ -16,6 +16,9 @@ import openfl.utils._internal.Float32Array;
 import openfl.utils._internal.UInt16Array;
 import openfl.utils.ObjectPool;
 import openfl.Vector;
+#if sys
+import Sys;
+#end
 #if lime
 import lime.graphics.cairo.Cairo;
 #end
@@ -53,6 +56,15 @@ import js.html.CanvasRenderingContext2D;
 {
 	@:noCompletion private static var maxTextureHeight:Null<Int> = null;
 	@:noCompletion private static var maxTextureWidth:Null<Int> = null;
+
+	// Fast-path switch for drawQuads bounds (FNF_SKIP_QUADS_BOUNDS=1).
+	// Off by default: identical upstream exact bounds.
+	// On: scalar-only scan keeps the render gate alive and skips matrix/rect pool work;
+	// bounds become an approximate "translation + raw size" box, while pixels are unaffected.
+	public static var skipQuadsBounds(default, null):Bool = false;
+	#if sys
+	@:noCompletion private static var __skipQuadsBoundsEnvChecked:Bool = false;
+	#end
 
 	@:noCompletion private var __bounds:Rectangle;
 	@:noCompletion private var __commands:DrawCommandBuffer;
@@ -892,6 +904,14 @@ import js.html.CanvasRenderingContext2D;
 		var length = hasIndices ? indices.length : Math.floor(rects.length / 4);
 		if (length == 0) return;
 
+		#if sys
+		if (!__skipQuadsBoundsEnvChecked)
+		{
+			__skipQuadsBoundsEnvChecked = true;
+			skipQuadsBounds = (Sys.getEnv("FNF_SKIP_QUADS_BOUNDS") == "1");
+		}
+		#end
+
 		if (transforms != null)
 		{
 			if (transforms.length >= length * 6)
@@ -909,67 +929,122 @@ import js.html.CanvasRenderingContext2D;
 			}
 		}
 
-		var tileRect = Rectangle.__pool.get();
-		var tileTransform = Matrix.__pool.get();
-
-		var minX = Math.POSITIVE_INFINITY;
-		var minY = Math.POSITIVE_INFINITY;
-		var maxX = Math.NEGATIVE_INFINITY;
-		var maxY = Math.NEGATIVE_INFINITY;
-
-		var ri, ti;
-
-		for (i in 0...length)
+		if (!skipQuadsBounds)
 		{
-			ri = (hasIndices ? (indices[i] * 4) : i * 4);
-			if (ri < 0) continue;
-			tileRect.setTo(0, 0, rects[ri + 2], rects[ri + 3]);
+			var tileRect = Rectangle.__pool.get();
+			var tileTransform = Matrix.__pool.get();
 
-			if (tileRect.width <= 0 || tileRect.height <= 0)
+			var minX = Math.POSITIVE_INFINITY;
+			var minY = Math.POSITIVE_INFINITY;
+			var maxX = Math.NEGATIVE_INFINITY;
+			var maxY = Math.NEGATIVE_INFINITY;
+
+			var ri, ti;
+
+			for (i in 0...length)
 			{
-				continue;
+				ri = (hasIndices ? (indices[i] * 4) : i * 4);
+				if (ri < 0) continue;
+				tileRect.setTo(0, 0, rects[ri + 2], rects[ri + 3]);
+
+				if (tileRect.width <= 0 || tileRect.height <= 0)
+				{
+					continue;
+				}
+
+				if (transformABCD && transformXY)
+				{
+					ti = i * 6;
+					tileTransform.setTo(transforms[ti], transforms[ti + 1], transforms[ti + 2], transforms[ti + 3], transforms[ti + 4], transforms[ti + 5]);
+				}
+				else if (transformABCD)
+				{
+					ti = i * 4;
+					tileTransform.setTo(transforms[ti], transforms[ti + 1], transforms[ti + 2], transforms[ti + 3], tileRect.x, tileRect.y);
+				}
+				else if (transformXY)
+				{
+					ti = i * 2;
+					tileTransform.tx = transforms[ti];
+					tileTransform.ty = transforms[ti + 1];
+				}
+				else
+				{
+					tileTransform.tx = tileRect.x;
+					tileTransform.ty = tileRect.y;
+				}
+
+				tileRect.__transform(tileRect, tileTransform);
+
+				if (minX > tileRect.x) minX = tileRect.x;
+				if (minY > tileRect.y) minY = tileRect.y;
+				if (maxX < tileRect.right) maxX = tileRect.right;
+				if (maxY < tileRect.bottom) maxY = tileRect.bottom;
 			}
 
-			if (transformABCD && transformXY)
-			{
-				ti = i * 6;
-				tileTransform.setTo(transforms[ti], transforms[ti + 1], transforms[ti + 2], transforms[ti + 3], transforms[ti + 4], transforms[ti + 5]);
-			}
-			else if (transformABCD)
-			{
-				ti = i * 4;
-				tileTransform.setTo(transforms[ti], transforms[ti + 1], transforms[ti + 2], transforms[ti + 3], tileRect.x, tileRect.y);
-			}
-			else if (transformXY)
-			{
-				ti = i * 2;
-				tileTransform.tx = transforms[ti];
-				tileTransform.ty = transforms[ti + 1];
-			}
-			else
-			{
-				tileTransform.tx = tileRect.x;
-				tileTransform.ty = tileRect.y;
-			}
+			__inflateBounds(minX, minY);
+			__inflateBounds(maxX, maxY);
 
-			tileRect.__transform(tileRect, tileTransform);
-
-			if (minX > tileRect.x) minX = tileRect.x;
-			if (minY > tileRect.y) minY = tileRect.y;
-			if (maxX < tileRect.right) maxX = tileRect.right;
-			if (maxY < tileRect.bottom) maxY = tileRect.bottom;
+			Rectangle.__pool.release(tileRect);
+			Matrix.__pool.release(tileTransform);
 		}
+		else
+		{
+			// Fast path: scalar-only conservative bounds to keep the render gate alive.
+			var minX = Math.POSITIVE_INFINITY;
+			var minY = Math.POSITIVE_INFINITY;
+			var maxX = Math.NEGATIVE_INFINITY;
+			var maxY = Math.NEGATIVE_INFINITY;
 
-		__inflateBounds(minX, minY);
-		__inflateBounds(maxX, maxY);
+			var ri, ti, rx, ry, rw, rh, qx, qy, qx2, qy2;
+
+			for (i in 0...length)
+			{
+				ri = (hasIndices ? (indices[i] * 4) : i * 4);
+				if (ri < 0) continue;
+
+				rw = rects[ri + 2];
+				rh = rects[ri + 3];
+				if (rw <= 0 || rh <= 0) continue;
+
+				rx = rects[ri];
+				ry = rects[ri + 1];
+
+				if (transformXY)
+				{
+					ti = i * (transformABCD ? 6 : 2);
+					qx = transforms[ti + (transformABCD ? 4 : 0)];
+					qy = transforms[ti + (transformABCD ? 5 : 1)];
+				}
+				else if (transformABCD)
+				{
+					// Translation-only mode uses the rect's own origin.
+					qx = rx;
+					qy = ry;
+				}
+				else
+				{
+					qx = rx;
+					qy = ry;
+				}
+
+				qx2 = qx + rw;
+				qy2 = qy + rh;
+
+				if (qx < minX) minX = qx;
+				if (qy < minY) minY = qy;
+				if (qx2 > maxX) maxX = qx2;
+				if (qy2 > maxY) maxY = qy2;
+			}
+
+			__inflateBounds(minX, minY);
+			__inflateBounds(maxX, maxY);
+		}
 
 		__commands.drawQuads(rects, indices, transforms);
 
 		__dirty = true;
 		__visible = true;
-
-		Rectangle.__pool.release(tileRect);
-		Matrix.__pool.release(tileTransform);
 	}
 
 	/**
