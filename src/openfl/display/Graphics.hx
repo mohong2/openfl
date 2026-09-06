@@ -57,11 +57,12 @@ import js.html.CanvasRenderingContext2D;
 	@:noCompletion private static var maxTextureHeight:Null<Int> = null;
 	@:noCompletion private static var maxTextureWidth:Null<Int> = null;
 
-	// Fast-path switch for drawQuads bounds (FNF_SKIP_QUADS_BOUNDS=1).
-	// Off by default: identical upstream exact bounds.
-	// On: scalar-only scan keeps the render gate alive and skips matrix/rect pool work;
-	// bounds become an approximate "translation + raw size" box, while pixels are unaffected.
-	public static var skipQuadsBounds(default, null):Bool = false;
+	// Fast-path switch for drawQuads bounds (FNF_SKIP_QUADS_BOUNDS=0 disables).
+	// On by default: scalar-only scan keeps the render gate alive and skips
+	// matrix/rect pool work per quad — work buildBuffer() repeats anyway to place
+	// the quads; bounds become an approximate "translation + raw size" box, while
+	// pixels are unaffected.
+	public static var skipQuadsBounds:Bool = true;
 	#if sys
 	@:noCompletion private static var __skipQuadsBoundsEnvChecked:Bool = false;
 	#end
@@ -908,7 +909,10 @@ import js.html.CanvasRenderingContext2D;
 		if (!__skipQuadsBoundsEnvChecked)
 		{
 			__skipQuadsBoundsEnvChecked = true;
-			skipQuadsBounds = (Sys.getEnv("FNF_SKIP_QUADS_BOUNDS") == "1");
+			if (Sys.getEnv("FNF_SKIP_QUADS_BOUNDS") == "0")
+			{
+				skipQuadsBounds = false;
+			}
 		}
 		#end
 

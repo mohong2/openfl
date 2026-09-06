@@ -40,6 +40,8 @@ class ShaderBuffer
 	public var paramCount:Int;
 	public var paramData:Float32Array;
 	public var paramDataBuffer:GLBuffer;
+	/** GL buffer capacity in float elements (grows only; see `Shader.__updateGLFromBuffer`). */
+	public var paramDataBufferCapacity:Int = 0;
 	public var paramDataLength:Int;
 	public var paramFloatCount:Int;
 	public var paramIntCount:Int;

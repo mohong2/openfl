@@ -63,6 +63,9 @@ class OpenGLRenderer extends DisplayObjectRenderer
 	@:noCompletion private static var __hasColorTransformValue:Array<Bool> = [false];
 	@:noCompletion private static var __scissorRectangle:Rectangle = new Rectangle();
 	@:noCompletion private static var __textureSizeValue:Array<Float> = [0, 0];
+	@:noCompletion private static var __staticDefaultDisplayShader:DisplayObjectShader;
+	@:noCompletion private static var __staticDefaultGraphicsShader:GraphicsShader;
+	@:noCompletion private static var __staticMaskShader:Context3DMaskShader;
 
 	/**
 		The current OpenGL render context
@@ -159,14 +162,18 @@ class OpenGLRenderer extends DisplayObjectRenderer
 		__stencilReference = 0;
 		__tempRect = new Rectangle();
 
-		__defaultDisplayShader = new DisplayObjectShader();
-		__defaultGraphicsShader = new GraphicsShader();
+		if (__staticDefaultDisplayShader == null) __staticDefaultDisplayShader = new DisplayObjectShader();
+		if (__staticDefaultGraphicsShader == null) __staticDefaultGraphicsShader = new GraphicsShader();
+		if (__staticMaskShader == null) __staticMaskShader = new Context3DMaskShader();
+
+		__defaultDisplayShader = __staticDefaultDisplayShader;
+		__defaultGraphicsShader = __staticDefaultGraphicsShader;
 		__defaultShader = __defaultDisplayShader;
 
 		__initShader(__defaultShader);
 
 		__scrollRectMasks = new ObjectPool<Shape>(function() return new Shape());
-		__maskShader = new Context3DMaskShader();
+		__maskShader = __staticMaskShader;
 	}
 
 	/**
@@ -350,7 +357,13 @@ class OpenGLRenderer extends DisplayObjectRenderer
 	{
 		__currentShaderBuffer = null;
 
-		if (__currentShader == shader) return;
+		var sameShader = __currentShader == shader;
+		#if mobile
+		var boundProgramMatches = shader == null ? __context3D.__state.program == null : __context3D.__state.program == shader.program;
+		if (sameShader && boundProgramMatches && (shader == null || !shader.__requiresInit())) return;
+		#else
+		if (sameShader) return;
+		#end
 
 		if (__currentShader != null)
 		{
@@ -368,7 +381,15 @@ class OpenGLRenderer extends DisplayObjectRenderer
 		else
 		{
 			__currentShader = shader;
+			#if mobile
+			// Consume a converter revision before binding. Rebuilding later in
+			// Shader.__enable() would leave Context3D bound to the old program
+			// and sampler uniforms would be written to the wrong object.
+			shader.__setMobileContext(__context3D);
+			if (shader.__requiresInit()) shader.__init();
+			#else
 			__initShader(shader);
+			#end
 			__context3D.setProgram(shader.program);
 			__context3D.__flushGLProgram();
 			// __context3D.__flushGLTextures ();
@@ -476,7 +497,14 @@ class OpenGLRenderer extends DisplayObjectRenderer
 			if (__currentShader.__hasColorTransform != null) __currentShader.__hasColorTransform.value = null;
 			if (__currentShader.__position != null) __currentShader.__position.value = null;
 			if (__currentShader.__matrix != null) __currentShader.__matrix.value = null;
-			__currentShader.__clearUseArray();
+			// Core render paths only enable these five array-backed attributes.
+			// Reset them directly so every Graphics batch does not scan all custom
+			// shader parameter arrays.
+			if (__currentShader.__position != null) __currentShader.__position.__useArray = false;
+			if (__currentShader.__textureCoord != null) __currentShader.__textureCoord.__useArray = false;
+			if (__currentShader.__alpha != null) __currentShader.__alpha.__useArray = false;
+			if (__currentShader.__colorMultiplier != null) __currentShader.__colorMultiplier.__useArray = false;
+			if (__currentShader.__colorOffset != null) __currentShader.__colorOffset.__useArray = false;
 		}
 	}
 
@@ -507,19 +535,31 @@ class OpenGLRenderer extends DisplayObjectRenderer
 			_matrix.ty = Math.round(_matrix.ty);
 		}
 
-		__matrix.identity();
-		__matrix[0] = _matrix.a;
-		__matrix[1] = _matrix.b;
-		__matrix[4] = _matrix.c;
-		__matrix[5] = _matrix.d;
-		__matrix[12] = _matrix.tx;
-		__matrix[13] = _matrix.ty;
-		__matrix.append(__flipped ? __projectionFlipped : __projection);
+		// The renderer projection is always the orthographic matrix created in
+		// __resize. Building a temporary Matrix4 used to perform dozens of
+		// individual Float32Array reads/writes here, which is expensive with a
+		// moving GC. Multiply the 2D transform by that sparse projection directly.
+		var projectionWidth = __displayWidth + __offsetX * 2;
+		var projectionHeight = __displayHeight + __offsetY * 2;
+		var projectionX = 2.0 / projectionWidth;
+		var projectionY = (__flipped ? -2.0 : 2.0) / projectionHeight;
 
-		for (i in 0...16)
-		{
-			__values[i] = __matrix[i];
-		}
+		__values[0] = _matrix.a * projectionX;
+		__values[1] = _matrix.b * projectionY;
+		__values[2] = 0;
+		__values[3] = 0;
+		__values[4] = _matrix.c * projectionX;
+		__values[5] = _matrix.d * projectionY;
+		__values[6] = 0;
+		__values[7] = 0;
+		__values[8] = 0;
+		__values[9] = 0;
+		__values[10] = -0.001;
+		__values[11] = 0;
+		__values[12] = _matrix.tx * projectionX - 1;
+		__values[13] = _matrix.ty * projectionY + (__flipped ? 1 : -1);
+		__values[14] = 0;
+		__values[15] = 1;
 
 		Matrix.__pool.release(_matrix);
 
@@ -531,12 +571,19 @@ class OpenGLRenderer extends DisplayObjectRenderer
 		if (shader != null)
 		{
 			// TODO: Change of GL context?
-
+			#if mobile
+			if (shader.__context != __context3D)
+			{
+				shader.__setMobileContext(__context3D);
+				shader.__init();
+			}
+			#else
 			if (shader.__context == null)
 			{
 				shader.__context = __context3D;
 				shader.__init();
 			}
+			#end
 
 			// currentShader = shader;
 			return shader;
@@ -550,12 +597,19 @@ class OpenGLRenderer extends DisplayObjectRenderer
 		if (shader != null)
 		{
 			// TODO: Change of GL context?
-
+			#if mobile
+			if (shader.__context != __context3D)
+			{
+				shader.__setMobileContext(__context3D);
+				shader.__init();
+			}
+			#else
 			if (shader.__context == null)
 			{
 				shader.__context = __context3D;
 				shader.__init();
 			}
+			#end
 
 			// currentShader = shader;
 			return shader;
@@ -569,12 +623,19 @@ class OpenGLRenderer extends DisplayObjectRenderer
 		if (shader != null)
 		{
 			// TODO: Change of GL context?
-
+			#if mobile
+			if (shader.__context != __context3D)
+			{
+				shader.__setMobileContext(__context3D);
+				shader.__init();
+			}
+			#else
 			if (shader.__context == null)
 			{
 				shader.__context = __context3D;
 				shader.__init();
 			}
+			#end
 
 			// currentShader = shader;
 			return shader;
@@ -842,10 +903,26 @@ class OpenGLRenderer extends DisplayObjectRenderer
 	{
 		if (object == null) return;
 
+		// IBitmapDrawable fields are dynamic at the generated C++ ABI. Walking
+		// DisplayObject.__Field (and its long strcmp chain) once for every child
+		// dominated simple scenes. BitmapData is the only non-DisplayObject
+		// implementation, so split it once at the public render boundary and use
+		// direct typed field access throughout the display list.
+		if (Std.isOfType(object, BitmapData))
+		{
+			Context3DBitmapData.renderDrawable(cast object, this);
+			return;
+		}
+
+		__renderDisplayObject(cast object);
+	}
+
+	@:noCompletion private function __renderDisplayObject(object:DisplayObject):Void
+	{
+		if (object == null) return;
+
 		switch (object.__drawableType)
 		{
-			case BITMAP_DATA:
-				Context3DBitmapData.renderDrawable(cast object, this);
 			case STAGE, SPRITE:
 				Context3DDisplayObjectContainer.renderDrawable(cast object, this);
 			case BITMAP:
@@ -868,10 +945,21 @@ class OpenGLRenderer extends DisplayObjectRenderer
 	{
 		if (object == null) return;
 
+		if (Std.isOfType(object, BitmapData))
+		{
+			Context3DBitmapData.renderDrawableMask(cast object, this);
+			return;
+		}
+
+		__renderDisplayObjectMask(cast object);
+	}
+
+	@:noCompletion private function __renderDisplayObjectMask(object:DisplayObject):Void
+	{
+		if (object == null) return;
+
 		switch (object.__drawableType)
 		{
-			case BITMAP_DATA:
-				Context3DBitmapData.renderDrawableMask(cast object, this);
 			case STAGE, SPRITE:
 				Context3DDisplayObjectContainer.renderDrawableMask(cast object, this);
 			case BITMAP:
@@ -977,10 +1065,10 @@ class OpenGLRenderer extends DisplayObjectRenderer
 	{
 		if (clipRect != null)
 		{
-			var x = Math.floor(clipRect.x);
-			var y = Math.floor(clipRect.y);
-			var width = (clipRect.width > 0 ? Math.ceil(clipRect.right) - x : 0);
-			var height = (clipRect.height > 0 ? Math.ceil(clipRect.bottom) - y : 0);
+			var x = Math.ffloor(clipRect.x);
+			var y = Math.ffloor(clipRect.y);
+			var width = (clipRect.width > 0 ? Math.fceil(clipRect.right) - x : 0);
+			var height = (clipRect.height > 0 ? Math.fceil(clipRect.bottom) - y : 0);
 
 			if (width < 0) width = 0;
 			if (height < 0) height = 0;
