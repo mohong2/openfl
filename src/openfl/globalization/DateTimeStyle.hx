@@ -2,7 +2,7 @@ package openfl.globalization;
 
 #if !flash
 #if !openfljs
-@:enum abstract DateTimeStyle(Null<Int>)
+enum abstract DateTimeStyle(Null<Int>)
 {
 	public var CUSTOM = 0;
 	public var LONG = 1;
@@ -48,7 +48,7 @@ package openfl.globalization;
 }
 #else
 @SuppressWarnings("checkstyle:FieldDocComment")
-@:enum abstract DateTimeStyle(String) from String to String
+enum abstract DateTimeStyle(String) from String to String
 {
 	public var CUSTOM = "custom";
 	public var LONG = "long";

@@ -2,7 +2,7 @@ package openfl.globalization;
 
 #if !flash
 #if !openfljs
-@:enum abstract DateTimeNameContext(Null<Int>)
+enum abstract DateTimeNameContext(Null<Int>)
 {
 	public var FORMAT = 0;
 	public var STANDALONE = 1;
@@ -39,7 +39,7 @@ package openfl.globalization;
 }
 #else
 @SuppressWarnings("checkstyle:FieldDocComment")
-@:enum abstract DateTimeNameContext(String) from String to String
+enum abstract DateTimeNameContext(String) from String to String
 {
 	public var FORMAT = "format";
 	public var STANDALONE = "standalone";

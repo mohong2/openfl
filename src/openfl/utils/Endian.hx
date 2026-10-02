@@ -19,7 +19,7 @@ import lime.system.Endian as LimeEndian;
 	it. Use the endian byte order that matches the protocol of the server that
 	is sending or receiving data.
 **/
-@:enum abstract Endian(Null<Int>)
+enum abstract Endian(Null<Int>)
 {
 	/**
 		Indicates the most significant byte of the multibyte number
@@ -105,7 +105,7 @@ import lime.system.Endian as LimeEndian;
 }
 #else
 @SuppressWarnings("checkstyle:FieldDocComment")
-@:enum abstract Endian(String) from String to String
+enum abstract Endian(String) from String to String
 {
 	public var BIG_ENDIAN = "bigEndian";
 	public var LITTLE_ENDIAN = "littleEndian";

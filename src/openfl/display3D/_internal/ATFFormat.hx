@@ -1,6 +1,6 @@
 package openfl.display3D._internal;
 
-@:enum abstract ATFFormat(Int)
+enum abstract ATFFormat(Int)
 {
 	public var RGB888 = 0;
 	public var RGBA8888 = 1;

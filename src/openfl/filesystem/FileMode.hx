@@ -1,8 +1,7 @@
 package openfl.filesystem;
 
 #if (!flash && sys)
-@:enum
-abstract FileMode(String) from String to String
+enum abstract FileMode(String) from String to String
 {
 	/**
 		Used for a file to be opened in write mode, with all written data appended to the end of the file.

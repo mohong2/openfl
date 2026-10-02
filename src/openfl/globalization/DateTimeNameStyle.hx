@@ -2,7 +2,7 @@ package openfl.globalization;
 
 #if !flash
 #if !openfljs
-@:enum abstract DateTimeNameStyle(Null<Int>)
+enum abstract DateTimeNameStyle(Null<Int>)
 {
 	public var FULL = 0;
 	public var LONG_ABBREVIATION = 1;
@@ -42,7 +42,7 @@ package openfl.globalization;
 }
 #else
 @SuppressWarnings("checkstyle:FieldDocComment")
-@:enum abstract DateTimeNameStyle(String) from String to String
+enum abstract DateTimeNameStyle(String) from String to String
 {
 	public var FULL = "full";
 	public var LONG_ABBREVIATION = "longAbbreviation";

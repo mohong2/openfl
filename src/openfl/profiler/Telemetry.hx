@@ -187,7 +187,7 @@ import openfl.utils._internal.Lib;
 }
 
 @SuppressWarnings("checkstyle:FieldDocComment")
-@:noCompletion @:dox(hide) @:enum abstract TelemetryCommandName(String) from String to String
+@:noCompletion @:dox(hide) enum abstract TelemetryCommandName(String) from String to String
 {
 	public var EVENT = ".event";
 	public var RENDER = ".render";
