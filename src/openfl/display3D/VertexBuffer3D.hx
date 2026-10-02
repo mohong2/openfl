@@ -133,22 +133,6 @@ class VertexBuffer3D
 	}
 
 	/**
-		Updates the contents of an existing buffer with `gl.bufferSubData` instead of
-		`gl.bufferData`, avoiding a re-allocation of the GPU buffer on every upload.
-		The caller must guarantee that the buffer was allocated with at least
-		`data.length` elements and that the new data fully overwrites the region that
-		will be rendered (otherwise stale data persists).
-	**/
-	public function uploadSubFromTypedArray(data:ArrayBufferView):Void
-	{
-		if (data == null) return;
-		var gl = __context.gl;
-
-		__context.__bindGLArrayBuffer(__id);
-		gl.bufferSubData(gl.ARRAY_BUFFER, 0, data);
-	}
-
-	/**
 		Uploads the data for a set of points to the rendering context from a vector array.
 
 		@param	data	a vector of 32-bit values. A single vertex is comprised of a

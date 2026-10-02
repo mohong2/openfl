@@ -9,9 +9,6 @@ import openfl.utils._internal.Log;
 import openfl.display3D.Context3D;
 import openfl.display3D.Program3D;
 import openfl.utils.ByteArray;
-#if mobile
-import shaders.MobileShaderConverter;
-#end
 
 /**
 	// TODO: Document GLSL Shaders
@@ -222,10 +219,6 @@ class Shader
 	@:noCompletion private var __glFragmentSource:String;
 	@:noCompletion private var __glSourceDirty:Bool;
 	@:noCompletion private var __glVertexSource:String;
-	#if mobile
-	@:noCompletion private var __glProgramDirty:Bool;
-	@:noCompletion private var __glTransformRevision:Int;
-	#end
 	@:noCompletion private var __hasColorTransform:ShaderParameter<Bool>;
 	@:noCompletion private var __inputBitmapData:Array<ShaderInput<BitmapData>>;
 	@:noCompletion private var __isGenerated:Bool;
@@ -270,10 +263,6 @@ class Shader
 		precisionHint = FULL;
 
 		__glSourceDirty = true;
-		#if mobile
-		__glProgramDirty = true;
-		__glTransformRevision = -1;
-		#end
 		__numPasses = 1;
 		__data = new ShaderData(code);
 	}
@@ -489,57 +478,11 @@ class Shader
 			__data = cast new ShaderData(null);
 		}
 
-		#if mobile
-		if (__glTransformRevision != MobileShaderConverter.revision)
-		{
-			// A converter setting/capability change only invalidates the native
-			// program. Preserve ShaderData and existing uniform values.
-			__glProgramDirty = true;
-			program = null;
-			glProgram = null;
-		}
-		#end
-
-		var requiresProgramInit = program == null || __glSourceDirty;
-		#if mobile
-		requiresProgramInit = requiresProgramInit || __glProgramDirty;
-		#end
-		if (__glFragmentSource != null && __glVertexSource != null && requiresProgramInit)
+		if (__glFragmentSource != null && __glVertexSource != null && (program == null || __glSourceDirty))
 		{
 			__initGL();
 		}
 	}
-
-	@:noCompletion private function __requiresInit():Bool
-	{
-		var result = __data == null || program == null || __glSourceDirty;
-		#if mobile
-		result = result || __glProgramDirty || __glTransformRevision != MobileShaderConverter.revision;
-		#end
-		return result;
-	}
-
-	#if mobile
-	@:noCompletion private function __setMobileContext(context:Context3D):Void
-	{
-		if (__context == context) return;
-		__context = context;
-		program = null;
-		glProgram = null;
-		__glProgramDirty = true;
-		__glTransformRevision = -1;
-	}
-
-	@:noCompletion private function __prepareMobileGLSLProgram(vertexSource:String, fragmentSource:String)
-	{
-		var gl = __context.gl;
-		var glVersion = MobileShaderConverter.configureFromGL(gl);
-		var prepared = MobileShaderConverter.prepareProgram(vertexSource, fragmentSource, glVersion);
-		for (diagnostic in prepared.diagnostics)
-			Log.warn('SeiunEngine GLSL ES conversion [${diagnostic.stage}:${diagnostic.line}]: ${diagnostic.message}');
-		return prepared;
-	}
-	#end
 
 	@:noCompletion private function __initGL():Void
 	{
@@ -577,15 +520,7 @@ class Shader
 			var vertex = prefix + glVertexSource;
 			var fragment = prefix + glFragmentSource;
 
-			#if mobile
-			var preparedSources = __prepareMobileGLSLProgram(vertex, fragment);
-			vertex = preparedSources.vertex;
-			fragment = preparedSources.fragment;
-			var id = preparedSources.cacheKey + '\nvertex:' + vertex.length + '\n' + vertex
-				+ '\nfragment:' + fragment.length + '\n' + fragment;
-			#else
 			var id = vertex + fragment;
-			#end
 
 			if (__context.__programs.exists(id))
 			{
@@ -604,10 +539,6 @@ class Shader
 
 			if (program != null)
 			{
-				#if mobile
-				__glTransformRevision = MobileShaderConverter.revision;
-				__glProgramDirty = false;
-				#end
 				glProgram = program.__glProgram;
 
 				for (input in __inputBitmapData)
@@ -667,22 +598,17 @@ class Shader
 
 		if (storageType == "uniform")
 		{
-			regex = ~/uniform[ \t]+(?:(?:lowp|mediump|highp)[ \t]+)?([A-Za-z0-9]+)[ \t]+([A-Za-z0-9_]+)/;
+			regex = ~/uniform ([A-Za-z0-9]+) ([A-Za-z0-9_]+)/;
 		}
 		else
 		{
-			// Accept OpenFL's legacy `attribute` and desktop GLSL's top-level
-			// `layout(...) in` without mistaking function `in` parameters for
-			// vertex buffers.
-			regex = ~/(?:^|[;\r\n])[ \t]*(?:layout[ \t]*\([^\r\n)]*\)[ \t]*)?(?:attribute|in)[ \t]+(?:(?:lowp|mediump|highp)[ \t]+)?([A-Za-z0-9]+)[ \t]+([A-Za-z0-9_]+)(?:[ \t]*\[[^;\r\n]*\])?[ \t]*;/;
+			regex = ~/attribute ([A-Za-z0-9]+) ([A-Za-z0-9_]+)/;
 		}
 
 		while (regex.matchSub(source, lastMatch))
 		{
 			type = regex.matched(1);
 			name = regex.matched(2);
-			position = regex.matchedPos();
-			lastMatch = position.pos + position.len;
 
 			if (StringTools.startsWith(name, "gl_"))
 			{
@@ -816,10 +742,13 @@ class Shader
 							}
 						}
 
-					Reflect.setField(__data, name, parameter);
-					if (__isGenerated) Reflect.setField(this, name, parameter);
+						Reflect.setField(__data, name, parameter);
+						if (__isGenerated) Reflect.setField(this, name, parameter);
 				}
 			}
+
+			position = regex.matchedPos();
+			lastMatch = position.pos + position.len;
 		}
 	}
 
@@ -892,24 +821,12 @@ class Shader
 			if (shaderBuffer.paramDataBuffer == null)
 			{
 				shaderBuffer.paramDataBuffer = gl.createBuffer();
-				shaderBuffer.paramDataBufferCapacity = 0;
 			}
 
 			// Log.verbose ("bind param data buffer (length: " + shaderBuffer.paramData.length + ") (" + shaderBuffer.paramCount + ")");
 
 			__context.__bindGLArrayBuffer(shaderBuffer.paramDataBuffer);
-
-			// gl.bufferData re-allocates the GPU buffer on every call; only pay that
-			// when the payload grows, otherwise update the existing buffer in place.
-			if (shaderBuffer.paramData.length > shaderBuffer.paramDataBufferCapacity)
-			{
-				gl.bufferData(gl.ARRAY_BUFFER, shaderBuffer.paramData, gl.DYNAMIC_DRAW);
-				shaderBuffer.paramDataBufferCapacity = shaderBuffer.paramData.length;
-			}
-			else
-			{
-				gl.bufferSubData(gl.ARRAY_BUFFER, 0, shaderBuffer.paramData);
-			}
+			gl.bufferData(gl.ARRAY_BUFFER, shaderBuffer.paramData, gl.DYNAMIC_DRAW);
 		}
 		else
 		{

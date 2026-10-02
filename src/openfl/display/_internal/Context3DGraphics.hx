@@ -48,6 +48,7 @@ class Context3DGraphics
 
 		var context = renderer.__context3D;
 
+		var tileRect = Rectangle.__pool.get();
 		var tileTransform = Matrix.__pool.get();
 
 		var bitmap = null;
@@ -102,8 +103,7 @@ class Context3DGraphics
 						var transformABCD = false, transformXY = false;
 
 						var length = hasIndices ? indices.length : Math.floor(rects.length / 4);
-						// Note: don't return here — an empty DRAW_QUADS command must not
-						// abort the remaining commands or the final buffer flush.
+						if (length == 0) return;
 
 						if (transforms != null)
 						{
@@ -122,9 +122,6 @@ class Context3DGraphics
 							}
 						}
 
-						if (length > 0)
-						{
-
 						var dataPerVertex = 4;
 						var stride = dataPerVertex * 4;
 
@@ -137,17 +134,14 @@ class Context3DGraphics
 							graphics.__quadBuffer.resize(quadBufferPosition + length, dataPerVertex);
 						}
 
-						// Explicit Float/Int types: untyped vars become Dynamic on hxcpp,
-						// boxing every operation inside this per-quad loop.
-						var vertexOffset:Int;
-						var bitmapWidth:Float,
-							bitmapHeight:Float,
-							tileWidth:Float = 0,
-							tileHeight:Float = 0;
-						var uvX:Float, uvY:Float, uvWidth:Float, uvHeight:Float;
-						var x:Float, y:Float, x2:Float, y2:Float, x3:Float, y3:Float, x4:Float, y4:Float;
-						var ta:Float, tb:Float, tc:Float, td:Float, ttx:Float, tty:Float;
-						var ri:Int, ti:Int;
+						var vertexOffset, alpha = 1.0, tileData, id;
+						var bitmapWidth,
+							bitmapHeight,
+							tileWidth:Float,
+							tileHeight:Float;
+						var uvX, uvY, uvWidth, uvHeight;
+						var x, y, x2, y2, x3, y3, x4, y4;
+						var ri, ti;
 
 						var vertexBufferData = graphics.__quadBuffer.vertexBufferData;
 
@@ -167,14 +161,18 @@ class Context3DGraphics
 						bitmapHeight = bitmap.height;
 						#end
 
+						var sourceRect = bitmap.rect;
+
 						for (i in 0...length)
 						{
 							vertexOffset = (quadBufferPosition + i) * stride;
 
 							ri = (hasIndices ? (indices[i] * 4) : i * 4);
 							if (ri < 0) continue;
-							tileWidth = rects[ri + 2];
-							tileHeight = rects[ri + 3];
+							tileRect.setTo(rects[ri], rects[ri + 1], rects[ri + 2], rects[ri + 3]);
+
+							tileWidth = tileRect.width;
+							tileHeight = tileRect.height;
 
 							if (tileWidth <= 0 || tileHeight <= 0)
 							{
@@ -184,76 +182,39 @@ class Context3DGraphics
 							if (transformABCD && transformXY)
 							{
 								ti = i * 6;
-								ta = transforms[ti];
-								tb = transforms[ti + 1];
-								tc = transforms[ti + 2];
-								td = transforms[ti + 3];
-								ttx = transforms[ti + 4];
-								tty = transforms[ti + 5];
+								tileTransform.setTo(transforms[ti], transforms[ti + 1], transforms[ti + 2], transforms[ti + 3], transforms[ti + 4],
+									transforms[ti + 5]);
 							}
 							else if (transformABCD)
 							{
 								ti = i * 4;
-								ta = transforms[ti];
-								tb = transforms[ti + 1];
-								tc = transforms[ti + 2];
-								td = transforms[ti + 3];
-								ttx = rects[ri];
-								tty = rects[ri + 1];
+								tileTransform.setTo(transforms[ti], transforms[ti + 1], transforms[ti + 2], transforms[ti + 3], tileRect.x, tileRect.y);
+							}
+							else if (transformXY)
+							{
+								ti = i * 2;
+								tileTransform.tx = transforms[ti];
+								tileTransform.ty = transforms[ti + 1];
 							}
 							else
 							{
-								ta = 1;
-								tb = 0;
-								tc = 0;
-								td = 1;
-								if (transformXY)
-								{
-									ti = i * 2;
-									ttx = transforms[ti];
-									tty = transforms[ti + 1];
-								}
-								else
-								{
-									ttx = rects[ri];
-									tty = rects[ri + 1];
-								}
+								tileTransform.tx = tileRect.x;
+								tileTransform.ty = tileRect.y;
 							}
 
-							uvX = rects[ri] / bitmapWidth;
-							uvY = rects[ri + 1] / bitmapHeight;
-							uvWidth = (rects[ri] + tileWidth) / bitmapWidth;
-							uvHeight = (rects[ri + 1] + tileHeight) / bitmapHeight;
+							uvX = tileRect.x / bitmapWidth;
+							uvY = tileRect.y / bitmapHeight;
+							uvWidth = tileRect.right / bitmapWidth;
+							uvHeight = tileRect.bottom / bitmapHeight;
 
-							if (tb == 0 && tc == 0)
-							{
-								// Axis-aligned quad: expand the rect corners directly,
-								// skipping the pooled Matrix and the 8 __transformX/Y calls.
-								var dw = ta * tileWidth;
-								var dh = td * tileHeight;
-
-								x = ttx;
-								y = tty;
-								x2 = ttx + dw;
-								y2 = tty;
-								x3 = ttx;
-								y3 = tty + dh;
-								x4 = x2;
-								y4 = y3;
-							}
-							else
-							{
-								tileTransform.setTo(ta, tb, tc, td, ttx, tty);
-
-								x = tileTransform.__transformX(0, 0);
-								y = tileTransform.__transformY(0, 0);
-								x2 = tileTransform.__transformX(tileWidth, 0);
-								y2 = tileTransform.__transformY(tileWidth, 0);
-								x3 = tileTransform.__transformX(0, tileHeight);
-								y3 = tileTransform.__transformY(0, tileHeight);
-								x4 = tileTransform.__transformX(tileWidth, tileHeight);
-								y4 = tileTransform.__transformY(tileWidth, tileHeight);
-							}
+							x = tileTransform.__transformX(0, 0);
+							y = tileTransform.__transformY(0, 0);
+							x2 = tileTransform.__transformX(tileWidth, 0);
+							y2 = tileTransform.__transformY(tileWidth, 0);
+							x3 = tileTransform.__transformX(0, tileHeight);
+							y3 = tileTransform.__transformY(0, tileHeight);
+							x4 = tileTransform.__transformX(tileWidth, tileHeight);
+							y4 = tileTransform.__transformY(tileWidth, tileHeight);
 
 							vertexBufferData[vertexOffset + 0] = x;
 							vertexBufferData[vertexOffset + 1] = y;
@@ -277,8 +238,6 @@ class Context3DGraphics
 						}
 
 						quadBufferPosition += length;
-
-						} // length > 0
 					}
 
 				case DRAW_TRIANGLES:
@@ -356,10 +315,9 @@ class Context3DGraphics
 
 		// TODO: Should we use static data specific to Context3DGraphics instead of each Graphics instance?
 
-		// QUADS vertex layout: 4 vertices per quad, 4 floats per vertex.
 		if (quadBufferPosition > 0)
 		{
-			graphics.__quadBuffer.flushVertexBufferData(quadBufferPosition * 16);
+			graphics.__quadBuffer.flushVertexBufferData();
 		}
 
 		if (triangleIndexBufferPosition > 0)
@@ -404,6 +362,7 @@ class Context3DGraphics
 			buffer.uploadFromTypedArray(graphics.__vertexBufferDataUVT);
 		}
 
+		Rectangle.__pool.release(tileRect);
 		Matrix.__pool.release(tileTransform);
 	}
 

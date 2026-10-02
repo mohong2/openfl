@@ -20,10 +20,6 @@ class Context3DBuffer
 	public var indexBuffers:Array<IndexBuffer3D>;
 	public var indexCount:Int;
 	public var vertexBuffer:VertexBuffer3D;
-	/** GL buffer capacity in float elements (see `flushVertexBufferData`). */
-	public var vertexBufferFloatCapacity:Int = 0;
-	/** Float length of the previous flush, used to detect the steady-state case. */
-	public var lastFlushLength:Int = -1;
 	public var vertexBufferData:Float32Array;
 	public var vertexCount:Int;
 
@@ -76,52 +72,15 @@ class Context3DBuffer
 		}
 	}
 
-	public function flushVertexBufferData(usedLength:Int = 0):Void
+	public function flushVertexBufferData():Void
 	{
-		var length = vertexBufferData.length;
-		if (usedLength <= 0 || usedLength > length) usedLength = length;
-
-		// Shrink the backing array once after a large drop in usage (e.g. after the
-		// camera pulls back), so steady-state uploads don't carry a stale tail.
-		if (length > 1024 && usedLength * 2 <= length)
+		if (vertexBufferData.length > vertexCount)
 		{
-			var shrunk = new Float32Array(usedLength);
-			shrunk.set(vertexBufferData.subarray(0, usedLength));
-			vertexBufferData = shrunk;
-			length = usedLength;
-
-			if (vertexBuffer != null)
-			{
-				vertexBuffer.dispose();
-				vertexBuffer = null;
-				vertexBufferFloatCapacity = 0;
-			}
+			vertexCount = vertexBufferData.length;
+			vertexBuffer = context3D.createVertexBuffer(vertexCount, dataPerVertex, DYNAMIC_DRAW);
 		}
 
-		if (vertexBuffer == null || length > vertexBufferFloatCapacity)
-		{
-			vertexCount = length;
-			vertexBuffer = context3D.createVertexBuffer(length, dataPerVertex, DYNAMIC_DRAW);
-			vertexBufferFloatCapacity = length;
-			vertexBuffer.uploadFromTypedArray(vertexBufferData);
-			lastFlushLength = usedLength;
-			return;
-		}
-
-		if (usedLength == lastFlushLength)
-		{
-			// Steady state: the same byte count as the previous flush fully
-			// overwrites the used region — update without re-allocating the GPU
-			// buffer (gl.bufferData reallocates on every call).
-			vertexBuffer.uploadSubFromTypedArray(vertexBufferData.subarray(0, usedLength));
-		}
-		else
-		{
-			// Used size changed since the last flush — redefine the buffer with the
-			// full backing array (fits: vertexBufferFloatCapacity >= length).
-			vertexBuffer.uploadFromTypedArray(vertexBufferData);
-			lastFlushLength = usedLength;
-		}
+		vertexBuffer.uploadFromTypedArray(vertexBufferData);
 	}
 
 	public function resize(elementCount:Int, dataPerVertex:Int = -1):Void
