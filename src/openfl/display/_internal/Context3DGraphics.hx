@@ -48,7 +48,6 @@ class Context3DGraphics
 
 		var context = renderer.__context3D;
 
-		var tileRect = Rectangle.__pool.get();
 		var tileTransform = Matrix.__pool.get();
 
 		var bitmap = null;
@@ -103,7 +102,13 @@ class Context3DGraphics
 						var transformABCD = false, transformXY = false;
 
 						var length = hasIndices ? indices.length : Math.floor(rects.length / 4);
-						if (length == 0) return;
+
+						// An empty drawQuads command used to 'return' here, which aborted the entire
+						// build: quads written by earlier commands were never flushed and every later
+						// command was dropped. Skip only the per-quad work instead, and keep the
+						// zero-length resize() from clobbering an existing quad buffer.
+						if (length > 0)
+						{
 
 						if (transforms != null)
 						{
@@ -141,6 +146,7 @@ class Context3DGraphics
 							tileHeight:Float;
 						var uvX, uvY, uvWidth, uvHeight;
 						var x, y, x2, y2, x3, y3, x4, y4;
+						var ta:Float, tb:Float, tc:Float, td:Float, ttx:Float, tty:Float;
 						var ri, ti;
 
 						var vertexBufferData = graphics.__quadBuffer.vertexBufferData;
@@ -161,18 +167,17 @@ class Context3DGraphics
 						bitmapHeight = bitmap.height;
 						#end
 
-						var sourceRect = bitmap.rect;
-
 						for (i in 0...length)
 						{
 							vertexOffset = (quadBufferPosition + i) * stride;
 
 							ri = (hasIndices ? (indices[i] * 4) : i * 4);
 							if (ri < 0) continue;
-							tileRect.setTo(rects[ri], rects[ri + 1], rects[ri + 2], rects[ri + 3]);
 
-							tileWidth = tileRect.width;
-							tileHeight = tileRect.height;
+							// Read the rect straight out of the packed array. Copying it into a pooled
+							// Rectangle costs a setTo call plus the field reads, for every quad, every frame.
+							tileWidth = rects[ri + 2];
+							tileHeight = rects[ri + 3];
 
 							if (tileWidth <= 0 || tileHeight <= 0)
 							{
@@ -182,39 +187,81 @@ class Context3DGraphics
 							if (transformABCD && transformXY)
 							{
 								ti = i * 6;
-								tileTransform.setTo(transforms[ti], transforms[ti + 1], transforms[ti + 2], transforms[ti + 3], transforms[ti + 4],
-									transforms[ti + 5]);
+								ta = transforms[ti];
+								tb = transforms[ti + 1];
+								tc = transforms[ti + 2];
+								td = transforms[ti + 3];
+								ttx = transforms[ti + 4];
+								tty = transforms[ti + 5];
 							}
 							else if (transformABCD)
 							{
 								ti = i * 4;
-								tileTransform.setTo(transforms[ti], transforms[ti + 1], transforms[ti + 2], transforms[ti + 3], tileRect.x, tileRect.y);
-							}
-							else if (transformXY)
-							{
-								ti = i * 2;
-								tileTransform.tx = transforms[ti];
-								tileTransform.ty = transforms[ti + 1];
+								ta = transforms[ti];
+								tb = transforms[ti + 1];
+								tc = transforms[ti + 2];
+								td = transforms[ti + 3];
+								ttx = rects[ri];
+								tty = rects[ri + 1];
 							}
 							else
 							{
-								tileTransform.tx = tileRect.x;
-								tileTransform.ty = tileRect.y;
+								// Matrix.__pool resets a released matrix to identity, which is what the
+								// old implicit a/b/c/d values were.
+								ta = 1;
+								tb = 0;
+								tc = 0;
+								td = 1;
+
+								if (transformXY)
+								{
+									ti = i * 2;
+									ttx = transforms[ti];
+									tty = transforms[ti + 1];
+								}
+								else
+								{
+									ttx = rects[ri];
+									tty = rects[ri + 1];
+								}
 							}
 
-							uvX = tileRect.x / bitmapWidth;
-							uvY = tileRect.y / bitmapHeight;
-							uvWidth = tileRect.right / bitmapWidth;
-							uvHeight = tileRect.bottom / bitmapHeight;
+							uvX = rects[ri] / bitmapWidth;
+							uvY = rects[ri + 1] / bitmapHeight;
+							uvWidth = (rects[ri] + tileWidth) / bitmapWidth;
+							uvHeight = (rects[ri + 1] + tileHeight) / bitmapHeight;
 
-							x = tileTransform.__transformX(0, 0);
-							y = tileTransform.__transformY(0, 0);
-							x2 = tileTransform.__transformX(tileWidth, 0);
-							y2 = tileTransform.__transformY(tileWidth, 0);
-							x3 = tileTransform.__transformX(0, tileHeight);
-							y3 = tileTransform.__transformY(0, tileHeight);
-							x4 = tileTransform.__transformX(tileWidth, tileHeight);
-							y4 = tileTransform.__transformY(tileWidth, tileHeight);
+							if (tb == 0 && tc == 0)
+							{
+								// Axis-aligned quad (the common case). Expanding the corners by hand is
+								// bit-identical to the four __transformX/__transformY pairs below, because
+								// those inline to (px * a + py * c + tx, px * b + py * d + ty): the dropped
+								// terms are exact zeros and adding +0.0 does not change a sum.
+								var dw = ta * tileWidth;
+								var dh = td * tileHeight;
+
+								x = ttx;
+								y = tty;
+								x2 = ttx + dw;
+								y2 = tty;
+								x3 = ttx;
+								y3 = tty + dh;
+								x4 = x2;
+								y4 = y3;
+							}
+							else
+							{
+								tileTransform.setTo(ta, tb, tc, td, ttx, tty);
+
+								x = tileTransform.__transformX(0, 0);
+								y = tileTransform.__transformY(0, 0);
+								x2 = tileTransform.__transformX(tileWidth, 0);
+								y2 = tileTransform.__transformY(tileWidth, 0);
+								x3 = tileTransform.__transformX(0, tileHeight);
+								y3 = tileTransform.__transformY(0, tileHeight);
+								x4 = tileTransform.__transformX(tileWidth, tileHeight);
+								y4 = tileTransform.__transformY(tileWidth, tileHeight);
+							}
 
 							vertexBufferData[vertexOffset + 0] = x;
 							vertexBufferData[vertexOffset + 1] = y;
@@ -238,6 +285,8 @@ class Context3DGraphics
 						}
 
 						quadBufferPosition += length;
+
+						} // length > 0
 					}
 
 				case DRAW_TRIANGLES:
@@ -362,7 +411,6 @@ class Context3DGraphics
 			buffer.uploadFromTypedArray(graphics.__vertexBufferDataUVT);
 		}
 
-		Rectangle.__pool.release(tileRect);
 		Matrix.__pool.release(tileTransform);
 	}
 
