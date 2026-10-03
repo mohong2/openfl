@@ -12,7 +12,7 @@ class Context3DSimpleButton
 		if (!simpleButton.__renderable || simpleButton.__worldAlpha <= 0 || simpleButton.__currentState == null) return;
 
 		renderer.__pushMaskObject(simpleButton);
-		renderer.__renderDrawable(simpleButton.__currentState);
+		renderer.__renderDrawableDisplayObject(simpleButton.__currentState);
 		renderer.__popMaskObject(simpleButton);
 
 		renderer.__renderEvent(simpleButton);
@@ -22,6 +22,6 @@ class Context3DSimpleButton
 	{
 		if (simpleButton.__currentState == null) return;
 
-		renderer.__renderDrawableMask(simpleButton.__currentState);
+		renderer.__renderDrawableMaskDisplayObject(simpleButton.__currentState);
 	}
 }

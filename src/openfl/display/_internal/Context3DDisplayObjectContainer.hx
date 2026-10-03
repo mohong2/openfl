@@ -27,7 +27,7 @@ class Context3DDisplayObjectContainer
 			{
 				for (child in displayObjectContainer.__children)
 				{
-					renderer.__renderDrawable(child);
+					renderer.__renderDrawableDisplayObject(child);
 					child.__renderDirty = false;
 				}
 
@@ -37,7 +37,7 @@ class Context3DDisplayObjectContainer
 			{
 				for (child in displayObjectContainer.__children)
 				{
-					renderer.__renderDrawable(child);
+					renderer.__renderDrawableDisplayObject(child);
 				}
 			}
 		}
@@ -61,7 +61,7 @@ class Context3DDisplayObjectContainer
 
 		for (child in displayObjectContainer.__children)
 		{
-			renderer.__renderDrawableMask(child);
+			renderer.__renderDrawableMaskDisplayObject(child);
 		}
 	}
 }
