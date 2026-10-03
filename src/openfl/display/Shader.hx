@@ -598,17 +598,26 @@ class Shader
 
 		if (storageType == "uniform")
 		{
-			regex = ~/uniform ([A-Za-z0-9]+) ([A-Za-z0-9_]+)/;
+			// Tolerate a precision qualifier (GLSL ES: 'uniform mediump vec4 color;').
+			// Without this the old expression captured type='mediump', name='vec4' and the
+			// real uniform was never bound.
+			regex = ~/uniform[ \t]+(?:(?:lowp|mediump|highp)[ \t]+)?([A-Za-z0-9]+)[ \t]+([A-Za-z0-9_]+)/;
 		}
 		else
 		{
-			regex = ~/attribute ([A-Za-z0-9]+) ([A-Za-z0-9_]+)/;
+			regex = ~/attribute[ \t]+(?:(?:lowp|mediump|highp)[ \t]+)?([A-Za-z0-9]+)[ \t]+([A-Za-z0-9_]+)/;
 		}
 
 		while (regex.matchSub(source, lastMatch))
 		{
 			type = regex.matched(1);
 			name = regex.matched(2);
+
+			// Advance before any 'continue': the old code advanced lastMatch at the end of
+			// the body, so skipping a gl_-prefixed match re-matched the same position and
+			// spun forever.
+			position = regex.matchedPos();
+			lastMatch = position.pos + position.len;
 
 			if (StringTools.startsWith(name, "gl_"))
 			{
@@ -746,9 +755,6 @@ class Shader
 						if (__isGenerated) Reflect.setField(this, name, parameter);
 				}
 			}
-
-			position = regex.matchedPos();
-			lastMatch = position.pos + position.len;
 		}
 	}
 
