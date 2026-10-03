@@ -507,19 +507,52 @@ class OpenGLRenderer extends DisplayObjectRenderer
 			_matrix.ty = Math.round(_matrix.ty);
 		}
 
-		__matrix.identity();
+		// The old path filled a pooled Matrix4 (a Float32Array, so every store/load goes
+		// through ArrayBufferView) and multiplied it by the projection with a full 4x4
+		// append. The projection is always the sparse orthographic matrix built in
+		// __resize, so the product collapses to a handful of terms — but the values are
+		// still staged through __matrix so the a/b/c/d/tx/ty inputs are rounded to
+		// float32 exactly like they were before (the GL uniform upload is float32 too,
+		// see ShaderParameter.__uniformMatrix). The projection entries are read from the
+		// live matrix instead of being hardcoded, so this stays exact if __resize ever
+		// changes its ortho bounds.
 		__matrix[0] = _matrix.a;
 		__matrix[1] = _matrix.b;
 		__matrix[4] = _matrix.c;
 		__matrix[5] = _matrix.d;
 		__matrix[12] = _matrix.tx;
 		__matrix[13] = _matrix.ty;
-		__matrix.append(__flipped ? __projectionFlipped : __projection);
 
-		for (i in 0...16)
-		{
-			__values[i] = __matrix[i];
-		}
+		var projection = __flipped ? __projectionFlipped : __projection;
+		var p0 = projection[0];
+		var p5 = projection[5];
+
+		var a = __matrix[0];
+		var b = __matrix[1];
+		var c = __matrix[4];
+		var d = __matrix[5];
+		var tx = __matrix[12];
+		var ty = __matrix[13];
+
+		// Row 1 of M * P: a * P[0] + b * P[4] (P[0] = 2 / width, P[5] = +-2 / height).
+		__values[0] = a * p0;
+		__values[1] = b * p5;
+		__values[2] = 0;
+		__values[3] = 0;
+		__values[4] = c * p0;
+		__values[5] = d * p5;
+		__values[6] = 0;
+		__values[7] = 0;
+		// Row 3 of M * P is row 3 of P (M's last row is (0, 0, 0, 1)).
+		__values[8] = 0;
+		__values[9] = 0;
+		__values[10] = projection[10];
+		__values[11] = 0;
+		// Row 4 of M * P: tx * P[0] + P[12], ty * P[5] + P[13].
+		__values[12] = tx * p0 + projection[12];
+		__values[13] = ty * p5 + projection[13];
+		__values[14] = projection[14];
+		__values[15] = projection[15];
 
 		Matrix.__pool.release(_matrix);
 
@@ -842,6 +875,26 @@ class OpenGLRenderer extends DisplayObjectRenderer
 	{
 		if (object == null) return;
 
+		// IBitmapDrawable is an interface, so hxcpp types this parameter as Dynamic
+		// and every object.__drawableType read becomes a name-hashed __Field lookup
+		// (verified in the generated C++). BitmapData is the only implementation that
+		// is not a DisplayObject, so classify it once here and hand everything else to
+		// the typed overload below. Call sites that already hold a DisplayObject (the
+		// display list traversal) go straight to __renderDrawableDisplayObject and skip
+		// both the __Field lookup and this check.
+		if (Std.isOfType(object, BitmapData))
+		{
+			Context3DBitmapData.renderDrawable(cast object, this);
+			return;
+		}
+
+		__renderDrawableDisplayObject(cast object);
+	}
+
+	@:noCompletion private function __renderDrawableDisplayObject(object:DisplayObject):Void
+	{
+		if (object == null) return;
+
 		switch (object.__drawableType)
 		{
 			case BITMAP_DATA:
@@ -865,6 +918,19 @@ class OpenGLRenderer extends DisplayObjectRenderer
 	}
 
 	@:noCompletion private function __renderDrawableMask(object:IBitmapDrawable):Void
+	{
+		if (object == null) return;
+
+		if (Std.isOfType(object, BitmapData))
+		{
+			Context3DBitmapData.renderDrawableMask(cast object, this);
+			return;
+		}
+
+		__renderDrawableMaskDisplayObject(cast object);
+	}
+
+	@:noCompletion private function __renderDrawableMaskDisplayObject(object:DisplayObject):Void
 	{
 		if (object == null) return;
 
@@ -977,10 +1043,13 @@ class OpenGLRenderer extends DisplayObjectRenderer
 	{
 		if (clipRect != null)
 		{
-			var x = Math.floor(clipRect.x);
-			var y = Math.floor(clipRect.y);
-			var width = (clipRect.width > 0 ? Math.ceil(clipRect.right) - x : 0);
-			var height = (clipRect.height > 0 ? Math.ceil(clipRect.bottom) - y : 0);
+			// Math.ffloor/Math.fceil stay in the Float domain. On hxcpp the Int-returning
+			// Math.floor/Math.ceil add a float->int conversion plus range checks on every
+			// call, while these values are only ever consumed as Floats.
+			var x = Math.ffloor(clipRect.x);
+			var y = Math.ffloor(clipRect.y);
+			var width = (clipRect.width > 0 ? Math.fceil(clipRect.right) - x : 0);
+			var height = (clipRect.height > 0 ? Math.fceil(clipRect.bottom) - y : 0);
 
 			if (width < 0) width = 0;
 			if (height < 0) height = 0;
