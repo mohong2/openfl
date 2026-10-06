@@ -1317,10 +1317,17 @@ class FileReference extends EventDispatcher
 	@:noCompletion private function openFileDialog_onSelect(path:String):Void
 	{
 		#if sys
-		var fileInfo = FileSystem.stat(path);
-		creationDate = fileInfo.ctime;
-		modificationDate = fileInfo.mtime;
-		size = fileInfo.size;
+		// SeiunEngine fork: the picked file can disappear (or stat can fail) between
+		// the dialog and this callback; a throw here escapes into lime's event loop
+		// and terminates the process. Degrade to the metadata we can gather.
+		try
+		{
+			var fileInfo = FileSystem.stat(path);
+			creationDate = fileInfo.ctime;
+			modificationDate = fileInfo.mtime;
+			size = fileInfo.size;
+		}
+		catch (e:Dynamic) {}
 		type = "." + Path.extension(path);
 		#end
 
@@ -1350,10 +1357,26 @@ class FileReference extends EventDispatcher
 
 		if (__data != null)
 		{
-			File.saveBytes(path, __data);
+			// SeiunEngine fork: File.saveBytes throws on failure (bad path, read-only
+			// target, disk full, ...). This callback runs inside lime's event loop with
+			// no Haxe catch above it, so a failed write used to terminate the whole
+			// process (0xE06D7363 native crash). Dispatch the standard IOErrorEvent
+			// instead, which is the Flash API contract for a failed save.
+			try
+			{
+				File.saveBytes(path, __data);
 
-			__data = null;
-			__path = null;
+				__data = null;
+				__path = null;
+			}
+			catch (e:Dynamic)
+			{
+				__data = null;
+				__path = null;
+
+				dispatchEvent(new IOErrorEvent(IOErrorEvent.IO_ERROR, false, false, Std.string(e)));
+				return;
+			}
 		}
 		else
 		{
