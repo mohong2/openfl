@@ -1439,6 +1439,19 @@ class TextField extends InteractiveObject
 		if (beginIndex == endIndex) return;
 		if (beginIndex < 0 || endIndex <= 0 || endIndex < beginIndex || beginIndex >= max || endIndex > max) throw new RangeError();
 
+		// A whole-field format that only changes non-metric properties (colour, underline, url) cannot
+		// change glyph positions, and the layout groups keep a reference to the single range's
+		// TextFormat - which is mutated in place below - so the rasterizer picks the new colour up
+		// without a re-layout. Re-running the text engine here was a real cost per FlxText
+		// border/colour pass: FlxText applies a border-coloured and a fill-coloured format on every
+		// text rebuild. Restricted to the single-range whole-field case, which is the only one where
+		// the range objects are guaranteed not to be replaced while the groups still reference them.
+		var layoutMetricsChanged:Bool = true;
+		if (beginIndex == 0 && endIndex == max && __textEngine.textFormatRanges.length == 1)
+		{
+			layoutMetricsChanged = __layoutDiffers(__textEngine.textFormatRanges[0].format, format);
+		}
+
 		// there are 11 cases that have to be handled
 		// the order and logic of cases really matters!!
 		//	beginIndex == 0 && endIndex == max -> replace all format ranges with new one
@@ -1589,8 +1602,46 @@ class TextField extends InteractiveObject
 		}
 
 		__dirty = true;
-		__layoutDirty = true;
+		if (layoutMetricsChanged)
+			__layoutDirty = true;
 		__setRenderDirty();
+	}
+
+	/**
+	 * True when applying [incoming] over [current] (via TextFormat.__merge semantics, i.e. only the
+	 * non-null fields of [incoming]) can change text layout metrics.
+	 */
+	@:noCompletion private function __layoutDiffers(current:TextFormat, incoming:TextFormat):Bool
+	{
+		if (current == null || incoming == null)
+			return true;
+
+		if (incoming.font != null && incoming.font != current.font)
+			return true;
+		if (incoming.size != null && incoming.size != current.size)
+			return true;
+		if (incoming.bold != null && incoming.bold != current.bold)
+			return true;
+		if (incoming.italic != null && incoming.italic != current.italic)
+			return true;
+		if (incoming.leading != null && incoming.leading != current.leading)
+			return true;
+		if (incoming.align != null && incoming.align != current.align)
+			return true;
+		if (incoming.leftMargin != null && incoming.leftMargin != current.leftMargin)
+			return true;
+		if (incoming.rightMargin != null && incoming.rightMargin != current.rightMargin)
+			return true;
+		if (incoming.indent != null && incoming.indent != current.indent)
+			return true;
+		if (incoming.blockIndent != null && incoming.blockIndent != current.blockIndent)
+			return true;
+		if (incoming.bullet != null && incoming.bullet != current.bullet)
+			return true;
+		if (incoming.tabStops != null)
+			return true;
+
+		return false;
 	}
 
 	@:noCompletion private override function __allowMouseFocus():Bool
