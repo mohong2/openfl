@@ -57,7 +57,7 @@ class TextureBase extends EventDispatcher
 	@:noCompletion private var __textureTarget:Int;
 	@:noCompletion private var __width:Int;
 
-	@:noCompletion private function new(context:Context3D)
+	@:noCompletion private function new(context:Context3D, ?opaqueRGBInternalFormat:Int = 0)
 	{
 		super();
 
@@ -135,11 +135,22 @@ class TextureBase extends EventDispatcher
 			}
 		}
 
-		__internalFormat = __textureInternalFormat;
+		__internalFormat = opaqueRGBInternalFormat != 0 ? opaqueRGBInternalFormat : __textureInternalFormat;
 		__format = __textureFormat;
 
 		// __memoryUsage = 0;
 		// __compressedMemoryUsage = 0;
+	}
+
+	/**
+		Whether this context can accept a 3-component RGB texture whose upload
+		rows still come from the engine's BGRA byte buffer. Requires the BGRA
+		upload extension; otherwise a BGRA-format upload cannot be converted to
+		RGB by the driver.
+	**/
+	public static function supportsOpaqueRGB():Bool
+	{
+		return __supportsBGRA == true;
 	}
 
 	/**

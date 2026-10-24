@@ -837,6 +837,36 @@ import lime.math.Vector2;
 	}
 
 	/**
+		Creates an opaque RGB rectangle texture (3 bytes per texel in VRAM).
+		The upload still consumes the BitmapData's BGRA byte buffer; the driver
+		drops alpha. Falls back to null when the platform cannot convert BGRA
+		uploads into an RGB internal format, so callers must keep an RGBA path.
+	**/
+	public function createOpaqueRGBRectangleTexture(width:Int, height:Int):RectangleTexture
+	{
+		if (!TextureBase.supportsOpaqueRGB()) return null;
+		return new RectangleTexture(this, width, height, Context3DTextureFormat.BGRA, false, true);
+	}
+
+	/**
+		Creates a one-byte-per-texel rectangle texture for L1b palette indices.
+		`indexFormat` is a GL single-channel enum (ALPHA, LUMINANCE or R8), chosen
+		by the caller after a capability probe. Returns null if creation fails.
+	**/
+	public function createIndexRectangleTexture(width:Int, height:Int, indexFormat:Int):RectangleTexture
+	{
+		if (indexFormat == 0 || width <= 0 || height <= 0) return null;
+		try
+		{
+			return new RectangleTexture(this, width, height, Context3DTextureFormat.BGRA, false, false, indexFormat);
+		}
+		catch (e:Dynamic)
+		{
+			return null;
+		}
+	}
+
+	/**
 		Creates a Texture object.
 
 		Use a Texture object to upload texture bitmaps to the rendering context and to

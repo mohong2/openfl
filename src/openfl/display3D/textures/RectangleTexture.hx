@@ -24,9 +24,21 @@ import openfl.utils.ByteArray;
 @:access(openfl.display.Stage)
 @:final class RectangleTexture extends TextureBase
 {
-	@:noCompletion private function new(context:Context3D, width:Int, height:Int, format:String, optimizeForRenderToTexture:Bool)
+	@:noCompletion private function new(context:Context3D, width:Int, height:Int, format:String, optimizeForRenderToTexture:Bool, opaqueRGB:Bool = false,
+			indexFormat:Int = 0)
 	{
-		super(context);
+		// RGB has no alpha channel in VRAM (sampling returns alpha=1.0). The
+		// upload rows are still BGRA bytes; GL converts them on upload and drops
+		// the alpha component. A non-zero indexFormat selects the 8-bit palette
+		// index representation instead; both __internalFormat and __format must
+		// be that single-channel GL enum for texImage2D to accept the rows.
+		super(context, opaqueRGB && TextureBase.supportsOpaqueRGB() ? context.gl.RGB : 0);
+
+		if (indexFormat != 0)
+		{
+			__internalFormat = indexFormat;
+			__format = indexFormat;
+		}
 
 		__width = width;
 		__height = height;
@@ -102,6 +114,32 @@ import openfl.utils.ByteArray;
 
 		uploadFromTypedArray(new UInt8Array(data.toArrayBuffer(), byteArrayOffset));
 		#end
+	}
+
+	/**
+		Upload one 8-bit palette-index row per texel. Returns false when the driver
+		rejected the format so the caller can fall back to RGBA before drawing.
+	**/
+	public function uploadIndexData(data:ArrayBufferView, width:Int, height:Int):Bool
+	{
+		var gl = __context.gl;
+		gl.getError(); // clear any stale error, we only care about this upload
+
+		// One byte per pixel: rows are only naturally aligned when width % 4 == 0.
+		// GL's default UNPACK_ALIGNMENT is 4, so a 11097-wide row would be read as
+		// 11100 bytes and the driver can walk past the index buffer. Force 1 for
+		// this upload (and restore whatever the caller had afterwards).
+		var previousAlignment:Int = 4;
+		try previousAlignment = cast gl.getParameter(gl.UNPACK_ALIGNMENT) catch (e:Dynamic) {}
+		gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+
+		__context.__bindGLTexture2D(__textureID);
+		gl.texImage2D(__textureTarget, 0, __internalFormat, width, height, 0, __format, gl.UNSIGNED_BYTE, data);
+		var error = gl.getError();
+		__context.__bindGLTexture2D(null);
+
+		gl.pixelStorei(gl.UNPACK_ALIGNMENT, previousAlignment > 0 ? previousAlignment : 4);
+		return error == gl.NO_ERROR;
 	}
 
 	/**

@@ -124,6 +124,7 @@ class BitmapData implements IBitmapDrawable
 {
 	@:noCompletion private static inline var VERTEX_BUFFER_STRIDE:Int = 14;
 	@:noCompletion private static var __supportsBGRA:Null<Bool> = null;
+	@:noCompletion private static var __opaqueRGBFailed:Bool = false;
 	@:noCompletion private static var __textureFormat:Int;
 	@:noCompletion private static var __textureInternalFormat:Int;
 	#if lime
@@ -157,7 +158,52 @@ class BitmapData implements IBitmapDrawable
 		Since non-readable bitmap images do not have a software image buffer, they
 		will need to be recreated if the current hardware rendering context is lost.
 	**/
-	@:beta public var readable(default, null):Bool;
+	@:beta public var readable(get, set):Bool;
+
+	/**
+		Whether the CPU pixel buffer has been released while the GPU texture is kept.
+		Reading this flag never triggers a re-decode.
+	**/
+	public var cpuReleased(get, never):Bool;
+
+	/**
+		Whether a readable CPU copy is currently resident. Reading this flag never
+		triggers a re-decode, unlike `readable`.
+	**/
+	public var hasCPU(get, never):Bool;
+
+	/**
+		Whether a reload callback is installed, so `dropCPU()` may release pixels and
+		a later pixel access can transparently re-decode them.
+	**/
+	public var restorable(get, never):Bool;
+
+	/**
+		Whether this bitmap has been proven opaque and may use a 3-byte RGB GPU
+		texture. This never changes the CPU representation.
+	**/
+	public var opaqueTexture(get, never):Bool;
+
+	/** Bytes currently occupied by this bitmap's GPU texture (estimate). */
+	public var textureBytes(get, never):Float;
+
+	/**
+		Whether this bitmap is stored as an 8-bit palette index texture. CPU
+		pixels may still be the original RGBA buffer until they are dropped.
+	**/
+	public var paletteApplied(get, never):Bool;
+
+	/** Number of palette entries (including the reserved transparent slot). */
+	public var paletteColors(get, never):Int;
+
+	/** GL internal format used by the 8-bit index texture (0 when not applied). */
+	public var paletteFormat(get, never):Int;
+
+	/**
+		Bytes this bitmap really costs while CPU-resident: 4 bytes per pixel for
+		RGBA, or one index byte per pixel plus the 1 KB palette.
+	**/
+	public var storedBytes(get, never):Float;
 
 	// #end
 
@@ -195,6 +241,9 @@ class BitmapData implements IBitmapDrawable
 	@:noCompletion private var __indexBufferGrid:Rectangle;
 	@:noCompletion private var __isMask:Bool;
 	@:noCompletion private var __isValid:Bool;
+	@:noCompletion private var __readable:Bool;
+	@:noCompletion private var __cpuRestore:Void->BitmapData;
+	@:noCompletion private var __restoring:Bool = false;
 	@:noCompletion private var __mask:DisplayObject;
 	@:noCompletion private var __renderable:Bool;
 	@:noCompletion private var __renderTransform:Matrix;
@@ -206,6 +255,21 @@ class BitmapData implements IBitmapDrawable
 	@:noCompletion private var __textureHeight:Int;
 	@:noCompletion private var __textureVersion:Int;
 	@:noCompletion private var __textureWidth:Int;
+	@:noCompletion private var __opaqueTexture:Bool = false;
+	@:noCompletion private var __textureRGB:Bool = false;
+	// Palette (L1b): the GPU texture is an 8-bit index texture and the shader
+	// expands indices through a 256x1 palette texture. The CPU keeps its RGBA
+	// image for pixel reads until GfxMemory drops it; __paletteIndices is the
+	// deterministic GPU/restore copy and is only w*h bytes.
+	@:noCompletion private var __paletteApplied:Bool = false;
+	@:noCompletion private var __paletteDisabled:Bool = false;
+	@:noCompletion private var __paletteIndices:UInt8Array;
+	@:noCompletion private var __paletteFormat:Int = 0;
+	@:noCompletion private var __paletteColors:Int = 0;
+	/** Engine-owned GfxPalettePlan; Dynamic keeps openfl independent of backend.gfx. */
+	public var palettePlan:Dynamic;
+	/** Lazily created RGBA copy for per-sprite custom shaders (palette path). */
+	@:noCompletion private var __rgbaFallback:BitmapData;
 	@:noCompletion private var __transform:Matrix;
 	@:noCompletion private var __uvRect:Rectangle;
 	@:noCompletion private var __vertexBuffer:VertexBuffer3D;
@@ -344,6 +408,7 @@ class BitmapData implements IBitmapDrawable
 	public function applyFilter(sourceBitmapData:BitmapData, sourceRect:Rectangle, destPoint:Point, filter:BitmapFilter):Void
 	{
 		if (!readable || sourceBitmapData == null || !sourceBitmapData.readable) return;
+		invalidateOpaqueTexture();
 
 		// TODO: Ways to optimize this?
 
@@ -396,6 +461,18 @@ class BitmapData implements IBitmapDrawable
 	public function clone():BitmapData
 	{
 		#if lime
+		// A palette clone is always a plain RGBA bitmap: the palette render path
+		// belongs to the original graphic/shader pair, not to ad-hoc copies.
+		if (__paletteApplied)
+		{
+			if (image == null && __cpuRestore != null) restoreCPU();
+			if (image == null) return new BitmapData(width, height, transparent, 0);
+			var copy = BitmapData.fromImage(image.clone(), transparent);
+			copy.__worldTransform.copyFrom(__worldTransform);
+			copy.__renderTransform.copyFrom(__renderTransform);
+			return copy;
+		}
+
 		var bitmapData;
 
 		if (!__isValid)
@@ -442,6 +519,7 @@ class BitmapData implements IBitmapDrawable
 	public function colorTransform(rect:Rectangle, colorTransform:ColorTransform):Void
 	{
 		if (!readable) return;
+		invalidateOpaqueTexture();
 
 		#if lime
 		image.colorTransform(rect.__toLimeRectangle(), colorTransform.__toLimeColorMatrix());
@@ -621,6 +699,7 @@ class BitmapData implements IBitmapDrawable
 			destChannel:BitmapDataChannel):Void
 	{
 		if (!readable) return;
+		invalidateOpaqueTexture();
 
 		#if lime
 		var sourceChannel = switch (sourceChannel)
@@ -688,6 +767,7 @@ class BitmapData implements IBitmapDrawable
 			mergeAlpha:Bool = false):Void
 	{
 		if (!readable || sourceBitmapData == null) return;
+		invalidateOpaqueTexture();
 
 		#if lime
 		if (alphaPoint != null)
@@ -725,13 +805,15 @@ class BitmapData implements IBitmapDrawable
 	public function dispose():Void
 	{
 		image = null;
+		__cpuRestore = null;
+		__restoring = false;
 
 		width = 0;
 		height = 0;
 		rect = null;
 
 		__isValid = false;
-		readable = false;
+		__readable = false;
 
 		__surface = null;
 
@@ -740,6 +822,17 @@ class BitmapData implements IBitmapDrawable
 		__framebufferContext = null;
 		__texture = null;
 		__textureContext = null;
+		__textureRGB = false;
+		__paletteApplied = false;
+		__paletteIndices = null;
+		__paletteFormat = 0;
+		__paletteColors = 0;
+		palettePlan = null;
+		if (__rgbaFallback != null)
+		{
+			__rgbaFallback.dispose();
+			__rgbaFallback = null;
+		}
 
 		// if (__texture != null) {
 		//
@@ -776,6 +869,10 @@ class BitmapData implements IBitmapDrawable
 	**/
 	@:beta public function disposeImage():Void
 	{
+		// Restorable bitmaps go through dropCPU(): the texture stays, the reload
+		// callback stays, and a later pixel access re-decodes transparently.
+		if (dropCPU()) return;
+
 		#if lime
 		if (__isValid
 			&& __texture != null
@@ -787,7 +884,292 @@ class BitmapData implements IBitmapDrawable
 			__surface = null;
 		}
 		#end
-		readable = false;
+		__readable = false;
+	}
+
+	/**
+		Installs the callback used to re-decode this bitmap's CPU pixels after
+		`dropCPU()`. The callback must return a fresh, independent BitmapData
+		with the same dimensions; returning `this` is treated as "already
+		restored". Set to `null` before disposing the bitmap.
+	**/
+	public function setCPURestore(callback:Void->BitmapData):Void
+	{
+		__cpuRestore = callback;
+	}
+
+	/**
+		Prove that every CPU pixel is opaque, then allow getTexture() to allocate
+		a 3-byte RGB texture instead of RGBA. The source buffer stays BGRA on the
+		CPU; the driver drops alpha during upload. Returns false when any pixel is
+		transparent or the pixel buffer is unavailable.
+	**/
+	public function enableOpaqueTexture():Bool
+	{
+		if (__opaqueTexture) return true;
+		if (__paletteApplied || __paletteDisabled) return false;
+		if (!__isValid || image == null || image.buffer == null) return false;
+
+		// PNG color types 0/2 (and other formats without an alpha channel) are
+		// authoritative: no scan is needed and no pixel can be transparent.
+		if (!image.transparent)
+		{
+			__opaqueTexture = true;
+			return true;
+		}
+
+		var data = image.buffer.data;
+		if (data == null) return false;
+		var i:Int = 3;
+		var length:Int = data.length;
+		while (i < length)
+		{
+			if (data[i] != 255) return false;
+			i += 4;
+		}
+		__opaqueTexture = true;
+		return true;
+	}
+
+	/**
+		Return a normal RGBA bitmap for draw paths that cannot use the palette
+		shader (a per-sprite custom shader). The palette texture is left intact for
+		every other sprite using the same graphic. The copy is cached and only
+		allocated when such a shader is actually encountered.
+	**/
+	public function getRGBAFallback():BitmapData
+	{
+		if (!__paletteApplied) return this;
+		if (__rgbaFallback == null) __rgbaFallback = clone();
+		return __rgbaFallback != null ? __rgbaFallback : this;
+	}
+
+	/**
+		Revoke the RGB texture decision. Called by pixel-mutating APIs so a
+		bitmap that was opaque at load time can never keep an RGB texture after
+		transparency is introduced. Drops the texture lazily; the next render
+		recreates it as RGBA.
+	**/
+	public function setPaletteIndex(indices:UInt8Array, format:Int, colors:Int):Bool
+	{
+		if (!__isValid || __paletteDisabled) return false;
+		if (indices == null || format <= 0) return false;
+		if (Std.int(indices.length) != width * height) return false;
+
+		__paletteApplied = true;
+		__paletteIndices = indices;
+		__paletteFormat = format;
+		__paletteColors = colors;
+
+		// A palette texture cannot be combined with the opaque-RGB path: the
+		// shader reads an index from the texture, not a colour.
+		__opaqueTexture = false;
+		if (__texture != null)
+		{
+			__texture.dispose();
+			__texture = null;
+		}
+		__textureContext = null;
+		__textureRGB = false;
+		__textureVersion = -1;
+		return true;
+	}
+
+	/**
+		Drop the palette representation and let the next getTexture() rebuild a
+		normal RGBA texture. Called on pixel mutation or when the shader/texture
+		probe fails. The palette stays disabled for this bitmap so a loader queue
+		cannot re-apply it behind the caller's back.
+	**/
+	public function clearPalette():Void
+	{
+		if (!__paletteApplied) return;
+		__paletteApplied = false;
+		__paletteDisabled = true;
+		__paletteIndices = null;
+		__paletteFormat = 0;
+		__paletteColors = 0;
+		palettePlan = null;
+		if (__rgbaFallback != null)
+		{
+			__rgbaFallback.dispose();
+			__rgbaFallback = null;
+		}
+		if (__texture != null)
+		{
+			__texture.dispose();
+			__texture = null;
+		}
+		__textureContext = null;
+		__textureVersion = -1;
+	}
+
+	public function invalidateOpaqueTexture():Void
+	{
+		if (__paletteApplied)
+		{
+			clearPalette();
+			return;
+		}
+		if (!__opaqueTexture && !__textureRGB) return;
+		__opaqueTexture = false;
+		if (__textureRGB)
+		{
+			if (__texture != null) __texture.dispose();
+			__texture = null;
+			__textureContext = null;
+			__textureRGB = false;
+			__textureVersion = -1;
+		}
+	}
+
+	/**
+		Releases the CPU pixel buffer while keeping the existing GPU texture.
+
+		This is the safe replacement for `disposeImage()` on graphics that may
+		still be read: unlike `dispose()`, it keeps `__isValid` and the texture
+		alive, and unlike the old engine policy it does not touch the GC. It
+		refuses to drop pixels unless a restore callback is installed, the
+		texture already exists in the current render context, and the bitmap is
+		still valid.
+
+		@return true when the CPU buffer was released (or was already released).
+	**/
+	public function dropCPU():Bool
+	{
+		#if lime
+		if (image == null) return !__readable;
+		if (__cpuRestore == null) return false;
+		if (!__isValid || __texture == null) return false;
+
+		var stage = Lib.current != null ? Lib.current.stage : null;
+		if (stage == null || stage.context3D == null) return false;
+		if (__textureContext != stage.context3D.__context) return false;
+
+		image = null;
+		__surface = null;
+		__readable = false;
+		return true;
+		#else
+		return false;
+		#end
+	}
+
+	/**
+		Restores the CPU pixel buffer through the callback installed with
+		`setCPURestore()`. The existing GPU texture is kept and marked dirty so
+		the restored (possibly edited) pixels are uploaded on the next draw.
+	**/
+	public function restoreCPU():Bool
+	{
+		if (__readable) return true;
+		if (__cpuRestore == null || __restoring) return false;
+
+		var fresh:BitmapData = null;
+		__restoring = true;
+		try
+		{
+			fresh = __cpuRestore();
+		}
+		catch (e:Dynamic) {}
+		__restoring = false;
+
+		if (fresh == null) return false;
+		if (fresh == this)
+		{
+			// The callback found the same object in an external cache. Only count
+			// it as restored when the pixels are actually back.
+			__readable = image != null;
+			return __readable;
+		}
+
+		var img = fresh.image;
+		if (img == null || img.buffer == null) return false;
+		if (img.width != width || img.height != height) return false;
+
+		// Detach the image from the temporary BitmapData so a later disposal of
+		// that wrapper (or its GC) cannot invalidate the image we just adopted.
+		fresh.image = null;
+		fresh.__surface = null;
+		fresh.__readable = false;
+
+		__fromImage(img);
+		__textureVersion = -1;
+		return true;
+	}
+
+	/**
+		Whether this bitmap currently owns a texture in the given context.
+	**/
+	public function hasTexture(context:Context3D):Bool
+	{
+		return __isValid && __texture != null && __textureContext == context.__context;
+	}
+
+	inline function get_readable():Bool
+	{
+		// A pixel access is the one place where the CPU copy legitimately has to
+		// come back. Rendering never goes through this getter (getTexture reads
+		// __readable/image directly), so a dropped texture is not re-decoded on
+		// every frame.
+		if (!__readable && __cpuRestore != null && !__restoring && __isValid)
+		{
+			restoreCPU();
+		}
+		return __readable;
+	}
+
+	inline function set_readable(value:Bool):Bool
+	{
+		__readable = value;
+		return value;
+	}
+
+	inline function get_cpuReleased():Bool
+	{
+		return !__readable && __cpuRestore != null;
+	}
+
+	inline function get_hasCPU():Bool
+	{
+		return __readable;
+	}
+
+	inline function get_restorable():Bool
+	{
+		return __cpuRestore != null;
+	}
+
+	inline function get_opaqueTexture():Bool
+	{
+		return __opaqueTexture;
+	}
+
+	inline function get_textureBytes():Float
+	{
+		if (__texture == null) return 0;
+		if (__paletteApplied) return width * height + 256 * 4;
+		return width * height * (__textureRGB ? 3 : 4);
+	}
+
+	inline function get_paletteApplied():Bool
+	{
+		return __paletteApplied;
+	}
+
+	inline function get_paletteColors():Int
+	{
+		return __paletteColors;
+	}
+
+	inline function get_paletteFormat():Int
+	{
+		return __paletteFormat;
+	}
+
+	inline function get_storedBytes():Float
+	{
+		return __paletteApplied ? width * height + 256 * 4 : width * height * 4;
 	}
 
 	/**
@@ -868,6 +1250,7 @@ class BitmapData implements IBitmapDrawable
 			clipRect:Rectangle = null, smoothing:Bool = false):Void
 	{
 		if (source == null) return;
+		invalidateOpaqueTexture();
 
 		source.__update(false, true);
 
@@ -1163,6 +1546,7 @@ class BitmapData implements IBitmapDrawable
 	**/
 	public function fillRect(rect:Rectangle, color:Int):Void
 	{
+		invalidateOpaqueTexture();
 		__fillRect(rect, color, true);
 	}
 
@@ -1181,6 +1565,7 @@ class BitmapData implements IBitmapDrawable
 	{
 		#if lime
 		if (!readable) return;
+		invalidateOpaqueTexture();
 		image.floodFill(x, y, color, ARGB32);
 		#end
 	}
@@ -2177,10 +2562,78 @@ class BitmapData implements IBitmapDrawable
 	{
 		if (!__isValid) return null;
 
+		#if lime
+		// L1b: the index texture is the whole GPU representation. It survives
+		// CPU drops and context loss because __paletteIndices is never freed.
+		if (__paletteApplied && __paletteIndices == null)
+		{
+			__paletteApplied = false;
+			__paletteDisabled = true;
+		}
+		if (__paletteApplied)
+		{
+			if (__texture == null || __textureContext != context.__context)
+			{
+				__texture = context.createIndexRectangleTexture(width, height, __paletteFormat);
+				if (__texture != null)
+				{
+					__textureContext = context.__context;
+					__textureWidth = width;
+					__textureHeight = height;
+					__textureVersion = -1;
+					var indexTexture:openfl.display3D.textures.RectangleTexture = cast __texture;
+					if (!indexTexture.uploadIndexData(__paletteIndices, width, height))
+					{
+						__texture.dispose();
+						__texture = null;
+						__textureContext = null;
+						__paletteApplied = false;
+						__paletteDisabled = true;
+					}
+				}
+				else
+				{
+					__paletteApplied = false;
+					__paletteDisabled = true;
+				}
+			}
+
+			if (__texture != null)
+			{
+				__textureRGB = false;
+				return __texture;
+			}
+
+			// Failed after the CPU buffer was dropped: bring RGBA back so the
+			// normal path below can upload a valid texture instead of black.
+			if (image == null && __cpuRestore != null) restoreCPU();
+		}
+		#end
+
 		if (__texture == null || __textureContext != context.__context)
 		{
+			// A context loss or an explicit texture eviction invalidated the GPU
+			// copy. Bring the CPU pixels back through the reload callback before
+			// creating the replacement texture. If the callback is missing or the
+			// source is gone, the new texture is simply empty -- never a null
+			// texture the renderer would have to dereference.
+			if (image == null && __cpuRestore != null) restoreCPU();
+
 			__textureContext = context.__context;
-			__texture = context.createRectangleTexture(width, height, BGRA, false);
+			// Opaque assets use a 3-byte RGB texture. The BGRA source rows are
+			// converted by the driver during upload; alpha is dropped and sampling
+			// returns 1.0. Capability/upload failure falls back to RGBA below.
+			__textureRGB = __opaqueTexture && !__opaqueRGBFailed;
+			if (__textureRGB)
+			{
+				__texture = context.createOpaqueRGBRectangleTexture(width, height);
+				if (__texture == null)
+				{
+					__opaqueRGBFailed = true;
+					__textureRGB = false;
+				}
+			}
+			if (__texture == null) __texture = context.createRectangleTexture(width, height, BGRA, false);
 
 			// context.__bindGLTexture2D (__texture);
 			// gl.texParameteri (gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
@@ -2202,48 +2655,79 @@ class BitmapData implements IBitmapDrawable
 				__surface.flush();
 			}
 
-			var textureImage = image;
+			var uploaded:Bool = false;
 
-			#if (js && html5)
-			if (#if openfl_power_of_two true || #end (!TextureBase.__supportsBGRA && textureImage.format != RGBA32))
+			// Fast path: opaque BGRA -> RGB, no premultiply clone at all (alpha is
+			// 255, so premultiplication is an identity operation).
+			if (__textureRGB)
 			{
-				textureImage = textureImage.clone();
-				textureImage.format = RGBA32;
-				// textureImage.buffer.premultiplied = true;
-				#if openfl_power_of_two
-				textureImage.powerOfTwo = true;
-				#end
-			}
-			#else
-			if (#if openfl_power_of_two !textureImage.powerOfTwo || #end (!textureImage.premultiplied && textureImage.transparent))
-			{
-				// SeiunEngine P4：inPlacePreMultiply=true 时不再整幅 clone（省一份 w*h*4 峰值缓冲），
-				// 就地预乘。调用方必须承诺随后释放CPU副本或不再读取像素，否则读到预乘数据。
-				// 默认 false 保持上游行为（clone后预乘，原数据不动），像素级零差异。
-				if (inPlacePreMultiply == true)
+				__texture.__uploadFromImage(image);
+				var gl = context.gl;
+				if (gl.getError() == gl.NO_ERROR)
 				{
-					textureImage.premultiplied = true;
+					uploaded = true;
+					__textureVersion = image.version;
+					__textureWidth = image.buffer.width;
+					__textureHeight = image.buffer.height;
 				}
 				else
 				{
+					// The driver rejected RGB+BGRA. Never keep a broken texture:
+					// permanently fall back to RGBA for this process.
+					__opaqueRGBFailed = true;
+					__textureRGB = false;
+					__texture.dispose();
+					__texture = context.createRectangleTexture(width, height, BGRA, false);
+					__textureContext = context.__context;
+					__textureVersion = -1;
+				}
+			}
+
+			if (!uploaded)
+			{
+				var textureImage = image;
+
+				#if (js && html5)
+				if (#if openfl_power_of_two true || #end (!TextureBase.__supportsBGRA && textureImage.format != RGBA32))
+				{
 					textureImage = textureImage.clone();
-					textureImage.premultiplied = true;
+					textureImage.format = RGBA32;
+					// textureImage.buffer.premultiplied = true;
 					#if openfl_power_of_two
 					textureImage.powerOfTwo = true;
 					#end
 				}
+				#else
+				if (#if openfl_power_of_two !textureImage.powerOfTwo || #end (!textureImage.premultiplied && textureImage.transparent))
+				{
+					// SeiunEngine P4：inPlacePreMultiply=true 时不再整幅 clone（省一份 w*h*4 峰值缓冲），
+					// 就地预乘。调用方必须承诺随后释放CPU副本或不再读取像素，否则读到预乘数据。
+					// 默认 false 保持上游行为（clone后预乘，原数据不动），像素级零差异。
+					if (inPlacePreMultiply == true)
+					{
+						textureImage.premultiplied = true;
+					}
+					else
+					{
+						textureImage = textureImage.clone();
+						textureImage.premultiplied = true;
+						#if openfl_power_of_two
+						textureImage.powerOfTwo = true;
+						#end
+					}
+				}
+				#end
+
+				__texture.__uploadFromImage(textureImage);
+
+				__textureVersion = image.version;
+
+				__textureWidth = textureImage.buffer.width;
+				__textureHeight = textureImage.buffer.height;
 			}
-			#end
-
-			__texture.__uploadFromImage(textureImage);
-
-			__textureVersion = image.version;
-
-			__textureWidth = textureImage.buffer.width;
-			__textureHeight = textureImage.buffer.height;
 		}
 
-		if (!readable && image != null)
+		if (!__readable && image != null)
 		{
 			__surface = null;
 			image = null;
@@ -2582,6 +3066,7 @@ class BitmapData implements IBitmapDrawable
 	{
 		#if lime
 		if (!readable || sourceBitmapData == null || !sourceBitmapData.readable || sourceRect == null || destPoint == null) return;
+		invalidateOpaqueTexture();
 		image.merge(sourceBitmapData.image, sourceRect.__toLimeRectangle(), destPoint.__toLimeVector2(), redMultiplier, greenMultiplier, blueMultiplier,
 			alphaMultiplier);
 		#end
@@ -2618,6 +3103,7 @@ class BitmapData implements IBitmapDrawable
 	public function noise(randomSeed:Int, low:Int = 0, high:Int = 255, channelOptions:Int = 7, grayScale:Bool = false):Void
 	{
 		if (!readable) return;
+		invalidateOpaqueTexture();
 
 		// Seeded Random Number Generator
 		var rand:Void->Int =
@@ -2714,6 +3200,7 @@ class BitmapData implements IBitmapDrawable
 	public function paletteMap(sourceBitmapData:BitmapData, sourceRect:Rectangle, destPoint:Point, redArray:Array<Int> = null, greenArray:Array<Int> = null,
 			blueArray:Array<Int> = null, alphaArray:Array<Int> = null):Void
 	{
+		invalidateOpaqueTexture();
 		var sw:Int = Std.int(sourceRect.width);
 		var sh:Int = Std.int(sourceRect.height);
 
@@ -2829,6 +3316,7 @@ class BitmapData implements IBitmapDrawable
 	public function scroll(x:Int, y:Int):Void
 	{
 		if (!readable) return;
+		invalidateOpaqueTexture();
 		image.scroll(x, y);
 	}
 
@@ -2852,6 +3340,7 @@ class BitmapData implements IBitmapDrawable
 	public function setPixel(x:Int, y:Int, color:Int):Void
 	{
 		if (!readable) return;
+		invalidateOpaqueTexture();
 		#if lime
 		image.setPixel(x, y, color, ARGB32);
 		#end
@@ -2891,6 +3380,7 @@ class BitmapData implements IBitmapDrawable
 	public function setPixel32(x:Int, y:Int, color:Int):Void
 	{
 		if (!readable) return;
+		invalidateOpaqueTexture();
 		#if lime
 		image.setPixel32(x, y, color, ARGB32);
 		#end
@@ -2918,6 +3408,7 @@ class BitmapData implements IBitmapDrawable
 	public function setPixels(rect:Rectangle, byteArray:ByteArray):Void
 	{
 		if (!readable || rect == null) return;
+		invalidateOpaqueTexture();
 
 		var length = (rect.width * rect.height * 4);
 		if (byteArray.bytesAvailable < length) throw new Error("End of file was encountered.", 2030);
@@ -3001,6 +3492,7 @@ class BitmapData implements IBitmapDrawable
 	public function threshold(sourceBitmapData:BitmapData, sourceRect:Rectangle, destPoint:Point, operation:String, threshold:Int, color:Int = 0x00000000,
 			mask:Int = 0xFFFFFFFF, copySource:Bool = false):Int
 	{
+		invalidateOpaqueTexture();
 		if (sourceBitmapData == null
 			|| sourceRect == null
 			|| destPoint == null
@@ -3373,54 +3865,6 @@ class BitmapData implements IBitmapDrawable
 		}
 
 		__renderTransform.copyFrom(__worldTransform);
-	}
-
-	// ═══════════════════════════════════════════
-	// MohongEngine — Batch disposal utilities
-	// ═══════════════════════════════════════════
-
-	/**
-		Dispose multiple BitmapData instances in a batch.
-		More efficient than calling dispose() individually because it avoids
-		repeated GPU state synchronization.
-
-		@param bitmaps Array of BitmapData to dispose.
-		@return Count of successfully disposed bitmaps.
-	**/
-	public static function disposeBatch(bitmaps:Array<BitmapData>):Int
-	{
-		if (bitmaps == null || bitmaps.length == 0) return 0;
-
-		var disposed:Int = 0;
-		for (bmp in bitmaps)
-		{
-			if (bmp != null)
-			{
-				try
-				{
-					#if lime
-					if (bmp.image != null)
-					{
-						bmp.image.data = null;
-						bmp.image = null;
-					}
-					#end
-					if (bmp.__texture != null)
-					{
-						bmp.__texture.dispose();
-						bmp.__texture = null;
-					}
-					disposed++;
-				}
-				catch (e:Dynamic) {}
-			}
-		}
-
-		#if cpp
-		cpp.vm.Gc.run(false);
-		#end
-
-		return disposed;
 	}
 }
 #else

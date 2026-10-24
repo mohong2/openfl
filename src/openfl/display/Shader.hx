@@ -471,6 +471,36 @@ class Shader
 		#end
 	}
 
+	/**
+		Compile and link this shader against `context` now, instead of on the first
+		draw. Returns false when the driver rejected the program, so a runtime
+		feature can fall back before publishing a texture variant that would draw
+		nothing. Used by the L1b palette path.
+	**/
+	@:noCompletion public function gfxTryCompile(context:Context3D):Bool
+	{
+		if (__context != context)
+		{
+			__context = context;
+			program = null;
+			__glSourceDirty = true;
+		}
+
+		try
+		{
+			__init();
+		}
+		catch (e:Dynamic)
+		{
+			return false;
+		}
+
+		if (program == null) return false;
+		var gl = context.gl;
+		var glProgram:GLProgram = @:privateAccess program.__glProgram;
+		return glProgram != null && gl.getProgramParameter(glProgram, gl.LINK_STATUS) != 0;
+	}
+
 	@:noCompletion private function __init():Void
 	{
 		if (__data == null)
