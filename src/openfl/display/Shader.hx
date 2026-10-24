@@ -516,10 +516,20 @@ class Shader
 
 	@:noCompletion private function __initGL():Void
 	{
-		if (__glSourceDirty || __paramBool == null)
+		// A generated subclass can inherit empty parameter arrays from its base
+		// class even though its own source declares uniforms and attributes. If
+		// those arrays are empty there is nothing to upload, so treat that as
+		// "not parsed yet" and scan the sources again before compiling.
+		var hasGLData:Bool = __paramBool != null && (__paramBool.length > 0 || __paramFloat.length > 0
+			|| __paramInt.length > 0 || __inputBitmapData.length > 0);
+		if (__glSourceDirty || !hasGLData)
 		{
 			__glSourceDirty = false;
 			program = null;
+			// The old parameter objects describe the previous program. Keeping them
+			// makes __processGLData skip every name (it only creates an entry when the
+			// field is missing), so the fresh arrays would stay empty.
+			__data = cast new ShaderData(null);
 
 			__inputBitmapData = new Array();
 			__paramBool = new Array();
