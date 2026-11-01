@@ -1248,6 +1248,7 @@ import lime.math.Vector2;
 
 		__bindGLElementArrayBuffer(indexBuffer.__id);
 		gl.drawElements(gl.TRIANGLES, count, gl.UNSIGNED_SHORT, firstIndex * 2);
+
 	}
 
 	/**
@@ -1925,13 +1926,13 @@ import lime.math.Vector2;
 
 		if (buffer == null)
 		{
-			gl.disableVertexAttribArray(index);
+			__setGLVertexAttribArray(index, false);
 			__bindGLArrayBuffer(null);
 			return;
 		}
 
 		__bindGLArrayBuffer(buffer.__id);
-		gl.enableVertexAttribArray(index);
+		__setGLVertexAttribArray(index, true);
 
 		var byteOffset = bufferOffset * 4;
 
@@ -1955,6 +1956,42 @@ import lime.math.Vector2;
 			default:
 				throw new IllegalOperationError();
 		}
+
+	}
+
+	/**
+		Enables or disables a vertex attribute array, skipping the call when the GL state
+		already matches. Every `glEnableVertexAttribArray`/`glDisableVertexAttribArray` in
+		openfl goes through here, so the cache cannot drift; it is reset whenever the context
+		disposes its GL objects.
+	**/
+	@:noCompletion private function __setGLVertexAttribArray(index:Int, enable:Bool):Void
+	{
+		#if openfl_disable_context_cache
+		if (enable)
+		{
+			gl.enableVertexAttribArray(index);
+		}
+		else
+		{
+			gl.disableVertexAttribArray(index);
+		}
+		#else
+		var mask:Int = 1 << index;
+
+		if (enable)
+		{
+			if ((__contextState.__vertexAttribArrays & mask) != 0) return;
+			__contextState.__vertexAttribArrays |= mask;
+			gl.enableVertexAttribArray(index);
+		}
+		else
+		{
+			if ((__contextState.__vertexAttribArrays & mask) == 0) return;
+			__contextState.__vertexAttribArrays &= ~mask;
+			gl.disableVertexAttribArray(index);
+		}
+		#end
 	}
 
 	@:noCompletion private function __bindGLArrayBuffer(buffer:GLBuffer):Void
@@ -1981,31 +2018,50 @@ import lime.math.Vector2;
 		{
 			gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
 			__contextState.__currentGLFramebuffer = framebuffer;
+			__contextState.__viewportValid = false;
 		}
 	}
 
+	/**
+		Switches the active texture unit only when it differs from the cached one. Every
+		gl.activeTexture in this class goes through here so the cache cannot drift.
+	**/
+	@:noCompletion private function __setGLActiveTexture(unit:Int):Void
+	{
+		if (#if openfl_disable_context_cache true #else __contextState.activeTextureUnit != unit #end)
+		{
+			gl.activeTexture(gl.TEXTURE0 + unit);
+			__contextState.activeTextureUnit = unit;
+
+		}
+	}
+
+	/**
+		Binds a 2D texture on the active unit, skipping the call when that unit already holds
+		it. Texture binding is per (unit, target), so the cache is keyed by unit.
+	**/
 	@:noCompletion private function __bindGLTexture2D(texture:GLTexture):Void
 	{
-		// TODO: Need to consider activeTexture ID
+		var unit = __contextState.activeTextureUnit;
 
-		// if (#if openfl_disable_context_cache true #else __contextState.__currentGLTexture2D != texture #end) {
-
-		gl.bindTexture(gl.TEXTURE_2D, texture);
-		__contextState.__currentGLTexture2D = texture;
-
-		// }
+		if (#if openfl_disable_context_cache true #else __contextState.textureUnits[unit] != texture #end)
+		{
+			gl.bindTexture(gl.TEXTURE_2D, texture);
+			__contextState.textureUnits[unit] = texture;
+			__contextState.__currentGLTexture2D = texture;
+		}
 	}
 
 	@:noCompletion private function __bindGLTextureCubeMap(texture:GLTexture):Void
 	{
-		// TODO: Need to consider activeTexture ID
+		var unit = __contextState.activeTextureUnit;
 
-		// if (#if openfl_disable_context_cache true #else __contextState.__currentGLTextureCubeMap != texture #end) {
-
-		gl.bindTexture(gl.TEXTURE_CUBE_MAP, texture);
-		__contextState.__currentGLTextureCubeMap = texture;
-
-		// }
+		if (#if openfl_disable_context_cache true #else __contextState.textureUnitsCube[unit] != texture #end)
+		{
+			gl.bindTexture(gl.TEXTURE_CUBE_MAP, texture);
+			__contextState.textureUnitsCube[unit] = texture;
+			__contextState.__currentGLTextureCubeMap = texture;
+		}
 	}
 
 	@:noCompletion private function __dispose():Void
@@ -2019,6 +2075,13 @@ import lime.math.Vector2;
 			__stage3D.context3D = null;
 			__stage3D = null;
 		}
+
+		__contextState.activeTextureUnit = 0;
+		__contextState.textureUnits = [];
+		__contextState.textureUnitsCube = [];
+		__contextState.__viewportValid = false;
+		// A fresh GL context starts with every attribute array disabled.
+		__contextState.__vertexAttribArrays = 0;
 
 		__backBufferTexture = null;
 		__context = null;
@@ -2062,6 +2125,7 @@ import lime.math.Vector2;
 
 	@:noCompletion private function __flushGL():Void
 	{
+
 		__flushGLProgram();
 		__flushGLFramebuffer();
 		__flushGLViewport();
@@ -2073,6 +2137,7 @@ import lime.math.Vector2;
 		__flushGLScissor();
 		__flushGLStencil();
 		__flushGLTextures();
+
 	}
 
 	@:noCompletion private function __flushGLBlend():Void
@@ -2371,7 +2436,7 @@ import lime.math.Vector2;
 				samplerState = __state.samplerStates[i];
 			}
 
-			gl.activeTexture(gl.TEXTURE0 + sampler);
+			__setGLActiveTexture(sampler);
 
 			if (texture != null)
 			{
@@ -2387,11 +2452,6 @@ import lime.math.Vector2;
 					__bindGLTextureCubeMap(texture.__getTexture());
 				}
 
-				#if (desktop && !html5)
-				// TODO: Cache?
-				gl.enable(gl.TEXTURE_2D);
-				#end
-
 				__contextState.textures[i] = texture;
 
 				// }
@@ -2405,7 +2465,7 @@ import lime.math.Vector2;
 
 			if (__state.program != null && __state.program.__format == AGAL && samplerState.textureAlpha)
 			{
-				gl.activeTexture(gl.TEXTURE0 + sampler + 4);
+				__setGLActiveTexture(sampler + 4);
 
 				if (texture != null && texture.__alphaTexture != null)
 				{
@@ -2420,11 +2480,6 @@ import lime.math.Vector2;
 
 					texture.__alphaTexture.__setSamplerState(samplerState);
 					gl.uniform1i(__state.program.__agalAlphaSamplerEnabled[sampler].location, 1);
-
-					#if (desktop && !html5)
-					// TODO: Cache?
-					gl.enable(gl.TEXTURE_2D);
-					#end
 				}
 				else
 				{
@@ -2440,10 +2495,31 @@ import lime.math.Vector2;
 		}
 	}
 
+	/**
+		Issues gl.viewport only when the rectangle differs from the last one sent for the
+		current framebuffer. __bindGLFramebuffer clears __viewportValid, so a render target
+		switch always re-sends it even when the sizes match.
+	**/
+	@:noCompletion private function __setGLViewport(x:Int, y:Int, width:Int, height:Int):Void
+	{
+		if (#if openfl_disable_context_cache true #else !__contextState.__viewportValid
+			|| __contextState.__viewportX != x
+			|| __contextState.__viewportY != y
+			|| __contextState.__viewportWidth != width
+			|| __contextState.__viewportHeight != height #end)
+		{
+			gl.viewport(x, y, width, height);
+			__contextState.__viewportX = x;
+			__contextState.__viewportY = y;
+			__contextState.__viewportWidth = width;
+			__contextState.__viewportHeight = height;
+			__contextState.__viewportValid = true;
+
+		}
+	}
+
 	@:noCompletion private function __flushGLViewport():Void
 	{
-		// TODO: Cache
-
 		if (__state.renderToTexture == null)
 		{
 			if (__stage.context3D == this)
@@ -2459,11 +2535,11 @@ import lime.math.Vector2;
 				#end
 				var x = __stage3D == null ? 0 : Std.int(__stage3D.x);
 				var y = Std.int((__stage.window.height * __stage.window.scale) - scaledBackBufferHeight - (__stage3D == null ? 0 : __stage3D.y));
-				gl.viewport(x, y, scaledBackBufferWidth, scaledBackBufferHeight);
+				__setGLViewport(x, y, scaledBackBufferWidth, scaledBackBufferHeight);
 			}
 			else
 			{
-				gl.viewport(0, 0, backBufferWidth, backBufferHeight);
+				__setGLViewport(0, 0, backBufferWidth, backBufferHeight);
 			}
 		}
 		else
@@ -2490,7 +2566,7 @@ import lime.math.Vector2;
 				height = cubeTexture.__size;
 			}
 
-			gl.viewport(0, 0, width, height);
+			__setGLViewport(0, 0, width, height);
 		}
 	}
 

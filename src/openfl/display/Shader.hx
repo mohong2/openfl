@@ -433,12 +433,8 @@ class Shader
 
 		__context.__bindGLArrayBuffer(null);
 
-		#if lime
-		if (__context.__context.type == OPENGL)
-		{
-			gl.disable(gl.TEXTURE_2D);
-		}
-		#end
+		// The matching glDisable (GL_TEXTURE_2D) is gone as well: with the cap never
+		// enabled it was a pure state write per program switch.
 	}
 
 	@:noCompletion private function __enable():Void
@@ -463,12 +459,9 @@ class Shader
 			textureCount++;
 		}
 
-		#if lime
-		if (__context.__context.type == OPENGL && textureCount > 0)
-		{
-			gl.enable(gl.TEXTURE_2D);
-		}
-		#end
+		// glEnable (GL_TEXTURE_2D) used to be issued here. It only affects the
+		// fixed-function pipeline; sampling in a GLSL shader works with the cap disabled,
+		// so it was one redundant call per program switch.
 	}
 
 	/**

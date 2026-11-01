@@ -39,6 +39,7 @@ class Context3DGraphics
 
 	private static function buildBuffer(graphics:Graphics, renderer:OpenGLRenderer):Void
 	{
+
 		var quadBufferPosition = 0;
 		var triangleIndexBufferPosition = 0;
 		var vertexBufferPosition = 0;
@@ -416,6 +417,7 @@ class Context3DGraphics
 
 	private static function isCompatible(graphics:Graphics):Bool
 	{
+
 		#if (openfl_force_sw_graphics || force_sw_graphics)
 		return false;
 		#elseif (openfl_force_hw_graphics || force_hw_graphics)
@@ -511,6 +513,8 @@ class Context3DGraphics
 	{
 		if (!graphics.__visible || graphics.__commands.length == 0) return;
 
+		var glueMark:Float = 0;
+
 		if ((graphics.__bitmap != null && !graphics.__dirty) || !isCompatible(graphics))
 		{
 			// if (graphics.__quadBuffer != null || graphics.__triangleIndexBuffer != null) {
@@ -572,7 +576,9 @@ class Context3DGraphics
 				if (graphics.__hardwareDirty
 					|| (graphics.__quadBuffer == null && graphics.__vertexBuffer == null && graphics.__vertexBufferUVT == null))
 				{
+
 					buildBuffer(graphics, renderer);
+
 				}
 
 				var data = new DrawCommandReader(graphics.__commands);
@@ -637,6 +643,7 @@ class Context3DGraphics
 						case DRAW_QUADS:
 							if (bitmap != null)
 							{
+
 								var c = data.readDrawQuads();
 								var rects = c.rects;
 								var indices = c.indices;
@@ -709,6 +716,7 @@ class Context3DGraphics
 						case DRAW_RECT:
 							if (fill != null)
 							{
+
 								var c = data.readDrawRect();
 								var x = c.x;
 								var y = c.y;
@@ -882,6 +890,7 @@ class Context3DGraphics
 			graphics.__hardwareDirty = false;
 			graphics.__dirty = false;
 		}
+
 	}
 
 	public static function renderMask(graphics:Graphics, renderer:OpenGLRenderer):Void

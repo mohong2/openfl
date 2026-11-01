@@ -59,6 +59,36 @@ class Context3DState
 	private var __currentGLFramebuffer:GLFramebuffer;
 	private var __currentGLTexture2D:GLTexture;
 	private var __currentGLTextureCubeMap:GLTexture;
+
+	/**
+		Last viewport sent to GL. Invalidated whenever the framebuffer changes, because
+		a new framebuffer can share the dimensions but not the clip volume.
+	**/
+	@:noCompletion public var __viewportValid:Bool = false;
+	@:noCompletion public var __viewportX:Int = 0;
+	@:noCompletion public var __viewportY:Int = 0;
+	@:noCompletion public var __viewportWidth:Int = 0;
+	@:noCompletion public var __viewportHeight:Int = 0;
+
+	/**
+		Per-unit texture binding cache. GL_TEXTURE0 is the active unit at context creation,
+		so the initial value must be 0 (not -1) or the first bind would be skipped.
+	**/
+	@:noCompletion public var activeTextureUnit:Int = 0;
+	@:noCompletion public var textureUnits:Array<GLTexture> = [];
+	@:noCompletion public var textureUnitsCube:Array<GLTexture> = [];
+
+	/**
+		Bitmap of vertex attribute arrays currently enabled in GL (bit N = index N).
+
+		Vertex attribute array enablement is context-global, not per program, and almost every
+		draw leaves it exactly as the previous draw left it: openfl disables the constant
+		attributes and re-enables the buffered ones on every draw. Caching it removes the
+		redundant `glDisableVertexAttribArray`/`glEnableVertexAttribArray` calls. GL's initial
+		state has every array disabled, so 0 is the correct initial value.
+	**/
+	@:noCompletion public var __vertexAttribArrays:Int = 0;
+
 	private var __enableGLBlend:Bool;
 	private var __enableGLCullFace:Bool;
 	private var __enableGLDepthTest:Bool;

@@ -62,6 +62,19 @@ import js.html.CanvasRenderingContext2D;
 	// On: scalar-only scan keeps the render gate alive and skips matrix/rect pool work;
 	// bounds become an approximate "translation + raw size" box, while pixels are unaffected.
 	public static var skipQuadsBounds(default, null):Bool = false;
+
+	/**
+		Per-instance opt-out of the `drawQuads` bounds rescan.
+
+		The scan walks every quad to widen `__bounds`, which only gates whether the
+		graphics is rendered at all. A canvas that already has bounds from an earlier
+		command in the same frame (flixel's camera `fill()` always draws a full-view
+		rectangle first) does not need it, and the scan is O(quads) per batch.
+		When `__bounds` is still null the scan runs so the render gate cannot drop the
+		geometry - that is the transparent-background camera case.
+	**/
+	public var skipQuadBounds:Bool = false;
+
 	#if sys
 	@:noCompletion private static var __skipQuadsBoundsEnvChecked:Bool = false;
 	#end
@@ -929,7 +942,13 @@ import js.html.CanvasRenderingContext2D;
 			}
 		}
 
-		if (!skipQuadsBounds)
+		if (skipQuadBounds && __bounds != null)
+		{
+			// Bounds already established this frame by an earlier command (a camera fill,
+			// another batch, a drawRect). Keep them: they are already a superset of these
+			// quads, and the rescan below only widens bounds that nobody re-reads.
+		}
+		else if (!skipQuadsBounds)
 		{
 			var tileRect = Rectangle.__pool.get();
 			var tileTransform = Matrix.__pool.get();
@@ -1267,7 +1286,6 @@ import js.html.CanvasRenderingContext2D;
 		method. The line style remains in effect until you call the
 		`lineStyle()` or `lineGradientStyle()` methods, or
 		the `lineBitmapStyle()` method again with different parameters.
-
 
 		You can call the `lineBitmapStyle()` method in the middle of
 		drawing a path to specify different styles for different line segments

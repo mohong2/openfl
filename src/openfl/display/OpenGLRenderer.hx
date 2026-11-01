@@ -370,9 +370,10 @@ class OpenGLRenderer extends DisplayObjectRenderer
 			__currentShader = shader;
 			__initShader(shader);
 			__context3D.setProgram(shader.program);
+			// __flushGLProgram already runs shader.__enable() when the instance changes, so
+			// calling it here as well only re-sent the sampler uniform1i for the same program.
 			__context3D.__flushGLProgram();
 			// __context3D.__flushGLTextures ();
-			__currentShader.__enable();
 			__context3D.__state.shader = shader;
 		}
 	}
@@ -392,13 +393,16 @@ class OpenGLRenderer extends DisplayObjectRenderer
 	**/
 	public function updateShader():Void
 	{
+
 		if (__currentShader != null)
 		{
 			if (__currentShader.__position != null) __currentShader.__position.__useArray = true;
 			if (__currentShader.__textureCoord != null) __currentShader.__textureCoord.__useArray = true;
 			__context3D.setProgram(__currentShader.program);
 			__context3D.__flushGLProgram();
-			__context3D.__flushGLTextures();
+			// The flush here used the *previous* drawable's texture state: the new inputs are
+			// only written by __currentShader.__update() on the next line, and drawTriangles()
+			// runs __flushGL() -> __flushGLTextures() immediately afterwards anyway.
 			__currentShader.__update();
 		}
 	}
@@ -460,6 +464,7 @@ class OpenGLRenderer extends DisplayObjectRenderer
 
 	@:noCompletion private function __clearShader():Void
 	{
+
 		if (__currentShader != null)
 		{
 			if (__currentShaderBuffer == null)
@@ -1136,7 +1141,9 @@ class OpenGLRenderer extends DisplayObjectRenderer
 	{
 		if (__currentShader != null && __currentShaderBuffer != null)
 		{
+
 			__currentShader.__updateFromBuffer(__currentShaderBuffer, bufferOffset);
+
 		}
 	}
 }

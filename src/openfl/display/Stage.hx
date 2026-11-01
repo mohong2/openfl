@@ -78,7 +78,6 @@ typedef Element = Dynamic;
 	These properties may always be read, but since they cannot be set, they
 	will always contain default values.
 
-
 	* `accessibilityProperties`
 	* `alpha`
 	* `blendMode`
@@ -102,7 +101,6 @@ typedef Element = Dynamic;
 	* `visible`
 	* `x`
 	* `y`
-
 
 	Some events that you might expect to be a part of the Stage class, such
 	as `enterFrame`, `exitFrame`,
@@ -321,7 +319,6 @@ class Stage extends DisplayObjectContainer #if lime implements IModule #end
 		* `StageDisplayState.NORMAL` Sets the Flash runtime back to
 		the standard stage display mode.
 
-
 		The scaling behavior of the movie in full-screen mode is determined by
 		the `scaleMode` setting(set using the
 		`Stage.scaleMode` property or the SWF file's `embed`
@@ -337,7 +334,6 @@ class Stage extends DisplayObjectContainer #if lime implements IModule #end
 		The following restrictions apply to SWF files that play within an HTML
 		page(not those using the stand-alone Flash Player or not running in the
 		AIR runtime):
-
 
 		* To enable full-screen mode, add the `allowFullScreen`
 		parameter to the `object` and `embed` tags in the
@@ -541,7 +537,6 @@ class Stage extends DisplayObjectContainer #if lime implements IModule #end
 		`true` slows performance significantly and is not a recommended
 		setting).
 
-
 		Higher quality settings produce better rendering of scaled bitmaps.
 		However, higher quality settings are computationally more expensive. In
 		particular, when rendering scaled video, using higher quality settings can
@@ -592,7 +587,6 @@ class Stage extends DisplayObjectContainer #if lime implements IModule #end
 		fixed, so that it remains unchanged even as the size of the player window
 		changes. Cropping might occur if the player window is smaller than the
 		content.
-
 
 		@throws SecurityError Calling the `scaleMode` property of a
 							  Stage object throws an exception for any caller that

@@ -200,7 +200,7 @@ import openfl.display._internal.ShaderParameterUploadCache;
 		{
 			for (i in 0...__arrayLength)
 			{
-				gl.disableVertexAttribArray(index + i);
+				context.__setGLVertexAttribArray(index + i, false);
 			}
 		}
 	}
@@ -276,6 +276,7 @@ import openfl.display._internal.ShaderParameterUploadCache;
 					// case MATRIX4X3:
 
 					case MATRIX4X4:
+
 						for (i in 0...16)
 						{
 							__uniformMatrix[i] = floatValue[i];
@@ -362,7 +363,7 @@ import openfl.display._internal.ShaderParameterUploadCache;
 			{
 				for (i in 0...__arrayLength)
 				{
-					gl.disableVertexAttribArray(index + i);
+					context.__setGLVertexAttribArray(index + i, false);
 				}
 
 				if (value != null)
@@ -449,12 +450,13 @@ import openfl.display._internal.ShaderParameterUploadCache;
 						default:
 					}
 				}
+
 			}
 			else
 			{
 				for (i in 0...__arrayLength)
 				{
-					gl.enableVertexAttribArray(index + i);
+					context.__setGLVertexAttribArray(index + i, true);
 				}
 			}
 		}
@@ -472,6 +474,7 @@ import openfl.display._internal.ShaderParameterUploadCache;
 		{
 			if (length >= __length)
 			{
+
 				switch (type)
 				{
 					case BOOL, INT:
@@ -515,6 +518,7 @@ import openfl.display._internal.ShaderParameterUploadCache;
 					// case MATRIX4X3:
 
 					case MATRIX4X4:
+
 						for (i in 0...16)
 						{
 							__uniformMatrix[i] = buffer[position + i];
@@ -531,7 +535,7 @@ import openfl.display._internal.ShaderParameterUploadCache;
 			{
 				for (i in 0...__arrayLength)
 				{
-					gl.disableVertexAttribArray(index + i);
+					context.__setGLVertexAttribArray(index + i, false);
 				}
 
 				if (length > 0)
@@ -603,6 +607,7 @@ import openfl.display._internal.ShaderParameterUploadCache;
 						default:
 					}
 				}
+
 			}
 			else
 			{
@@ -612,7 +617,7 @@ import openfl.display._internal.ShaderParameterUploadCache;
 
 				for (i in 0...__arrayLength)
 				{
-					gl.enableVertexAttribArray(index + i);
+					context.__setGLVertexAttribArray(index + i, true);
 				}
 
 				if (length > 0)

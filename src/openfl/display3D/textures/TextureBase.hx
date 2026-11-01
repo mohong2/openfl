@@ -409,6 +409,9 @@ class TextureBase extends EventDispatcher
 
 		__context.__bindGLTexture2D(__textureID);
 
+		#if !(js && html5)
+		#end
+
 		#if (js && html5)
 		if (image.type != DATA && !image.premultiplied)
 		{
