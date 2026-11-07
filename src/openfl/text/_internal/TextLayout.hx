@@ -102,11 +102,6 @@ class TextLayout
 		positions = [];
 
 		#if (lime && lime_cffi && !macro)
-		#if hudtext_profile
-		var __p0:Float = haxe.Timer.stamp();
-		TextProf.positionCalls++;
-		TextProf.positionChars += (text == null ? 0 : text.length);
-		#end
 		if (text != null && text != "" && font != null && font.src != null)
 		{
 			if (__buffer == null)
@@ -135,10 +130,6 @@ class TextLayout
 				@:privateAccess font.__setSize(size);
 			}
 
-			#if hudtext_profile
-			var __p1:Float = haxe.Timer.stamp();
-			TextProf.tSetSize += __p1 - __p0;
-			#end
 
 			if (__hbBuffer == null)
 			{
@@ -163,24 +154,13 @@ class TextLayout
 			__hbBuffer.addUTF16(untyped __cpp__('(uintptr_t){0}', text.wc_str()), text.length, 0, -1);
 			#end
 
-			#if hudtext_profile
-			var __p2:Float = haxe.Timer.stamp();
-			TextProf.tAdd += __p2 - __p1;
-			#end
 
 			HB.shape(__hbFont, __hbBuffer);
 
-			#if hudtext_profile
-			var __p3:Float = haxe.Timer.stamp();
-			TextProf.tShape += __p3 - __p2;
-			#end
 
 			var _info = __hbBuffer.getGlyphInfo();
 			var _positions = __hbBuffer.getGlyphPositions();
 
-			#if hudtext_profile
-			var __p4:Float = haxe.Timer.stamp();
-			#end
 
 			if (_info != null && _positions != null)
 			{
@@ -207,11 +187,6 @@ class TextLayout
 				}
 			}
 
-			#if hudtext_profile
-			var __p5:Float = haxe.Timer.stamp();
-			TextProf.tInfo += __p4 - __p3;
-			TextProf.tLoop += __p5 - __p4;
-			#end
 		}
 		#end
 	}

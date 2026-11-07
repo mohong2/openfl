@@ -1816,10 +1816,6 @@ class TextEngine
 
 	private function update():Void
 	{
-		#if hudtext_profile
-		var __profT0:Float = haxe.Timer.stamp();
-		TextProf.engineUpdates++;
-		#end
 		if (text == null /*|| text == ""*/ || textFormatRanges.length == 0)
 		{
 			lineAscents.length = 0;
@@ -1847,9 +1843,6 @@ class TextEngine
 
 		getBounds();
 
-		#if hudtext_profile
-		TextProf.tEngine += haxe.Timer.stamp() - __profT0;
-		#end
 	}
 
 	// Get & Set Methods
