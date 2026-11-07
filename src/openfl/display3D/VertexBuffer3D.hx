@@ -61,6 +61,9 @@ class VertexBuffer3D
 	@:noCompletion private var __usage:Int;
 	@:noCompletion private var __vertexSize:Int;
 
+	/** Bytes of storage currently allocated on the GPU (0 until the first upload). */
+	@:noCompletion private var __allocatedBytes:Int = 0;
+
 	@:noCompletion private function new(context3D:Context3D, numVertices:Int, dataPerVertex:Int, bufferUsage:String)
 	{
 		__context = context3D;
@@ -180,6 +183,37 @@ class VertexBuffer3D
 
 		uploadFromTypedArray(__tempFloat32Array);
 		#end
+	}
+
+	/**
+		Uploads into storage this buffer already owns, and only re-specifies the buffer when the
+		new data does not fit.
+
+		A dynamic buffer that is refreshed every frame used to go through `uploadFromTypedArray`,
+		which is a full `bufferData`: the driver has to re-establish the buffer's storage on every
+		frame, i.e. allocate and copy. Keeping the storage and writing into it costs one
+		`bufferSubData` and no allocation at all. The bytes on the GPU are the same either way.
+
+		@param	data	The 32-bit values to upload.
+		@param	byteLength	How many bytes of `data` are valid.
+	**/
+	@:noCompletion public function uploadFromTypedArrayInPlace(data:ArrayBufferView, byteLength:Int):Void
+	{
+		if (data == null || byteLength <= 0) return;
+
+		var gl = __context.gl;
+
+		__context.__bindGLArrayBuffer(__id);
+
+		if (byteLength > __allocatedBytes)
+		{
+			__allocatedBytes = byteLength;
+			gl.bufferData(gl.ARRAY_BUFFER, data, __usage);
+		}
+		else
+		{
+			gl.bufferSubData(gl.ARRAY_BUFFER, 0, data);
+		}
 	}
 }
 #else

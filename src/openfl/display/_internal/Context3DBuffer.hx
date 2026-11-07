@@ -80,7 +80,9 @@ class Context3DBuffer
 			vertexBuffer = context3D.createVertexBuffer(vertexCount, dataPerVertex, DYNAMIC_DRAW);
 		}
 
-		vertexBuffer.uploadFromTypedArray(vertexBufferData);
+		// This runs for every quad buffer on every frame: the storage of a buffer that is only
+		// refreshed must survive the frame, otherwise each upload is a re-specification.
+		vertexBuffer.uploadFromTypedArrayInPlace(vertexBufferData, vertexBufferData.length * 4);
 	}
 
 	public function resize(elementCount:Int, dataPerVertex:Int = -1):Void
